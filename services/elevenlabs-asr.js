@@ -1,6 +1,5 @@
 import { WebSocket } from 'ws';
 
-// Correct endpoint for ElevenLabs Scribe v2 Realtime
 const ELEVENLABS_WS_URL = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime';
 
 /**
@@ -18,15 +17,19 @@ export class ElevenLabsASR {
     _connect() {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
-            // Only model_id and api_key in query params
-            const url = `${ELEVENLABS_WS_URL}?model_id=scribe_v2_realtime&api_key=${apiKey}`;
+            // Use query params for model_id, and xi-api-key header for auth
+            const url = `${ELEVENLABS_WS_URL}?model_id=scribe_v2_realtime`;
 
-            this.ws = new WebSocket(url);
+            this.ws = new WebSocket(url, {
+                headers: {
+                    'xi-api-key': apiKey
+                }
+            });
 
             this.ws.on('open', () => {
-                console.log('[ASR] WebSocket open, sending handshake...');
+                console.log('[ASR] WebSocket open, sending config...');
 
-                // Send the required handshake/init message as the FIRST message
+                // Send config message for audio format and VAD
                 const initMessage = {
                     type: 'config',
                     audio_format: 'mulaw_8000',
@@ -40,33 +43,30 @@ export class ElevenLabsASR {
                 this.ws.send(JSON.stringify(initMessage));
 
                 this.isReady = true;
-                console.log('[ASR] Connected to ElevenLabs Scribe v2 Realtime');
+                console.log('[ASR] Connected and configured');
                 resolve();
             });
 
             this.ws.on('message', (data) => {
                 try {
                     const response = JSON.parse(data);
+                    const msgType = response.message_type || response.type;
 
-                    // Handle different message types from ElevenLabs STT
-                    if (response.type === 'transcript') {
-                        const text = (response.data?.text || response.text || '').trim();
-                        const isFinal = response.data?.is_final ?? response.is_final ?? false;
-
-                        if (text) {
-                            console.log(`[ASR] ${isFinal ? 'FINAL' : 'partial'}: ${text}`);
-                            // Only send final transcripts to the agent
-                            if (isFinal && this.onTranscript) {
-                                this.onTranscript(text);
-                            }
+                    if (msgType === 'transcript' || msgType === 'final_transcript') {
+                        const text = (response.text || response.data?.text || '').trim();
+                        if (text && this.onTranscript) {
+                            console.log(`[ASR] FINAL: ${text}`);
+                            this.onTranscript(text);
                         }
-                    } else if (response.type === 'error') {
-                        console.error('[ASR] Server error:', response.message || JSON.stringify(response));
-                    } else if (response.type === 'config_ack' || response.type === 'ready') {
-                        console.log('[ASR] Config acknowledged, ready for audio');
+                    } else if (msgType === 'partial_transcript') {
+                        const text = (response.text || '').trim();
+                        if (text) console.log(`[ASR] partial: ${text}`);
+                    } else if (msgType === 'auth_error' || msgType === 'error') {
+                        console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
+                    } else if (msgType === 'session_begin' || msgType === 'config_ack' || msgType === 'ready') {
+                        console.log('[ASR] Session started / config acknowledged');
                     } else {
-                        // Log unknown message types for debugging
-                        console.log('[ASR] Message:', JSON.stringify(response).substring(0, 200));
+                        console.log('[ASR] Message:', JSON.stringify(response).substring(0, 300));
                     }
                 } catch (err) {
                     console.error('[ASR] Failed to parse message:', err.message);
@@ -76,7 +76,7 @@ export class ElevenLabsASR {
             this.ws.on('error', (err) => {
                 console.error('[ASR] Error:', err.message);
                 this.isReady = false;
-                resolve(); // resolve anyway so we don't hang
+                resolve();
             });
 
             this.ws.on('close', (code, reason) => {
@@ -87,13 +87,8 @@ export class ElevenLabsASR {
         });
     }
 
-    /**
-     * Send a base64-encoded mulaw audio chunk to ElevenLabs.
-     * @param {string} base64Audio 
-     */
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
-            // ElevenLabs expects audio as a JSON message with base64 audio
             this.ws.send(JSON.stringify({
                 type: 'audio',
                 audio: base64Audio
@@ -101,9 +96,6 @@ export class ElevenLabsASR {
         }
     }
 
-    /**
-     * Wait for the ASR connection to be ready.
-     */
     async waitReady() {
         await this._connectPromise;
     }
@@ -111,10 +103,7 @@ export class ElevenLabsASR {
     close() {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
-            // Send end-of-stream signal
-            try {
-                this.ws.send(JSON.stringify({ type: 'eos' }));
-            } catch { }
+            try { this.ws.send(JSON.stringify({ type: 'eos' })); } catch { }
             this.ws.close();
         }
     }

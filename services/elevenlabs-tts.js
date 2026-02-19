@@ -1,7 +1,8 @@
 import { WebSocket } from 'ws';
 
 const VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel
-const ELEVENLABS_WS_URL = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=eleven_flash_v2_5&output_format=ulaw_8000`;
+const MODEL_ID = 'eleven_flash_v2_5';
+const OUTPUT_FORMAT = 'ulaw_8000';
 
 export class ElevenLabsTTS {
     constructor(twilioWs, streamSid) {
@@ -14,19 +15,26 @@ export class ElevenLabsTTS {
 
     _connect() {
         return new Promise((resolve) => {
-            this.ws = new WebSocket(ELEVENLABS_WS_URL);
+            const apiKey = process.env.ELEVENLABS_API_KEY;
+            // Auth via xi-api-key header; model + format in query params
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}`;
+
+            this.ws = new WebSocket(url, {
+                headers: {
+                    'xi-api-key': apiKey
+                }
+            });
 
             this.ws.on('open', () => {
                 console.log('[TTS] WebSocket open, sending BOS...');
-                this.isReady = true;
 
-                // Send BOS (Beginning of Stream) with voice settings
+                // Send Beginning of Stream with voice settings
                 this.ws.send(JSON.stringify({
                     text: " ",
-                    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                    xi_api_key: process.env.ELEVENLABS_API_KEY
+                    voice_settings: { stability: 0.5, similarity_boost: 0.8 }
                 }));
 
+                this.isReady = true;
                 console.log('[TTS] Connected to ElevenLabs Flash v2.5');
                 resolve();
             });
@@ -36,6 +44,9 @@ export class ElevenLabsTTS {
                     const response = JSON.parse(data);
                     if (response.audio) {
                         this._sendToTwilio(response.audio);
+                    }
+                    if (response.error) {
+                        console.error('[TTS] Server error:', response.error);
                     }
                 } catch (err) {
                     console.error('[TTS] Failed to parse message:', err.message);
@@ -48,33 +59,31 @@ export class ElevenLabsTTS {
                 resolve();
             });
 
-            this.ws.on('close', () => {
-                console.log('[TTS] Disconnected');
+            this.ws.on('close', (code, reason) => {
+                console.log(`[TTS] Disconnected (code=${code}, reason=${reason})`);
                 this.isReady = false;
                 resolve();
             });
         });
     }
 
-    /**
-     * Wait for the TTS connection to be ready.
-     */
     async waitReady() {
         await this._connectPromise;
     }
 
     sendText(text) {
-        if (this.isReady && text) {
+        if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({
                 text,
-                try_trigger_generation: true,
-                xi_api_key: process.env.ELEVENLABS_API_KEY
+                try_trigger_generation: true
             }));
+        } else {
+            console.warn(`[TTS] Cannot send text. ready=${this.isReady}, wsState=${this.ws?.readyState}`);
         }
     }
 
     flush() {
-        if (this.isReady) {
+        if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ text: "" }));
         }
     }
@@ -92,6 +101,7 @@ export class ElevenLabsTTS {
     close() {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
+            try { this.ws.send(JSON.stringify({ text: "" })); } catch { }
             this.ws.close();
         }
     }
