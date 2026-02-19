@@ -134,5 +134,5 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v15-ASR-Reconnect]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v16-JSON-Protocol-Fix]`);
 });

@@ -4,11 +4,12 @@ import { WebSocket } from 'ws';
  * Manages the WebSocket connection to ElevenLabs ASR (Scribe v2 Realtime).
  * Feed audio chunks via sendAudio(). Transcripts are delivered via onTranscript callback.
  * 
- * KEY FIXES (v15):
- * - Send silence burst IMMEDIATELY on session_started to prevent ElevenLabs idle-close
- * - Reconnect on ANY unexpected close (including code 1000) if not intentionally closed
- * - Queue audio during reconnect and replay once reconnected
- * - More aggressive keepalive (every 2s)
+ * KEY FIX (v16):
+ * ElevenLabs Scribe v2 Realtime uses a **JSON-based protocol**, NOT raw binary.
+ * Audio must be sent as:
+ *   { "message_type": "input_audio_chunk", "audio_base_64": "...", "sample_rate": 8000 }
+ * 
+ * Previous versions were sending raw binary Buffers which ElevenLabs rejected immediately.
  */
 export class ElevenLabsASR {
     constructor(onTranscript) {
@@ -17,10 +18,8 @@ export class ElevenLabsASR {
         this.isReady = false;
         this._closed = false;
         this._reconnectAttempts = 0;
-        this._maxReconnectAttempts = 5;
+        this._maxReconnectAttempts = 3;
         this._keepaliveInterval = null;
-        this._initialSilenceInterval = null;
-        this._readyResolve = null;
         this._connectPromise = this._connect();
     }
 
@@ -30,9 +29,10 @@ export class ElevenLabsASR {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
+            // Note: audio_format is NOT a query param for the JSON protocol.
+            // Instead, sample_rate is sent per-chunk in the JSON message.
             const params = new URLSearchParams({
                 model_id: 'scribe_v2_realtime',
-                audio_format: 'ulaw_8000'
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
@@ -47,10 +47,9 @@ export class ElevenLabsASR {
                 if (!resolved) { resolved = true; resolve(); }
             };
 
-            // Timeout: if no session_started within 10s, resolve anyway
             const timeout = setTimeout(() => {
                 if (!resolved) {
-                    console.warn('[ASR] Timed out waiting for session_started');
+                    console.warn('[ASR] Timed out waiting for session_started (10s)');
                     if (this.ws?.readyState === WebSocket.OPEN) {
                         this.isReady = true;
                     }
@@ -59,44 +58,39 @@ export class ElevenLabsASR {
             }, 10000);
 
             this.ws.on('open', () => {
-                console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
+                console.log('[ASR] WebSocket open, waiting for session_started...');
                 this._reconnectAttempts = 0;
-
-                // CRITICAL: Start sending silence frames IMMEDIATELY on open
-                // Don't wait for session_started — ElevenLabs may close if it 
-                // doesn't receive audio quickly after the TCP handshake
-                this._startInitialSilence();
             });
 
             this.ws.on('message', (data) => {
                 try {
-                    const response = JSON.parse(data);
+                    const text = Buffer.isBuffer(data) ? data.toString() : data;
+                    const response = JSON.parse(text);
                     const msgType = response.type || response.message_type;
 
                     if (msgType === 'session_started') {
                         console.log('[ASR] Session started by server');
                         this.isReady = true;
                         clearTimeout(timeout);
-
-                        // Switch from aggressive initial silence to normal keepalive
-                        this._stopInitialSilence();
                         this._startKeepalive();
-
                         safeResolve();
                     } else if (msgType === 'transcript' || msgType === 'committed_transcript' || msgType === 'final_transcript') {
-                        const text = (response.transcript || response.text || '').trim();
-                        if (text && this.onTranscript) {
-                            console.log(`[ASR] ${msgType.toUpperCase()}: ${text}`);
-                            this.onTranscript(text);
+                        const transcript = (response.transcript || response.text || '').trim();
+                        if (transcript && this.onTranscript) {
+                            console.log(`[ASR] ${msgType.toUpperCase()}: ${transcript}`);
+                            this.onTranscript(transcript);
                         }
                     } else if (msgType === 'partial_transcript') {
-                        const text = (response.transcript || response.text || '').trim();
-                        if (text) console.log(`[ASR] partial: ${text}`);
+                        const transcript = (response.transcript || response.text || '').trim();
+                        if (transcript) console.log(`[ASR] partial: ${transcript}`);
                     } else if (msgType === 'error' || response.error) {
                         console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
+                    } else {
+                        // Log any other message types for debugging
+                        console.log(`[ASR] Received msg type: ${msgType}`);
                     }
                 } catch (err) {
-                    // Ignore binary or unparseable messages
+                    // Not JSON, ignore
                 }
             });
 
@@ -104,7 +98,6 @@ export class ElevenLabsASR {
                 console.error('[ASR] WebSocket Error:', err.message);
                 this.isReady = false;
                 this._stopKeepalive();
-                this._stopInitialSilence();
                 clearTimeout(timeout);
                 safeResolve();
             });
@@ -114,14 +107,11 @@ export class ElevenLabsASR {
                 console.log(`[ASR] Disconnected (code=${code}, reason=${reasonStr})`);
                 this.isReady = false;
                 this._stopKeepalive();
-                this._stopInitialSilence();
                 clearTimeout(timeout);
 
-                // Reconnect on ANY close if not intentionally closed
-                // Even code=1000 — ElevenLabs sometimes sends 1000 on idle timeout
                 if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
                     this._reconnectAttempts++;
-                    const delay = Math.min(500 * this._reconnectAttempts, 3000);
+                    const delay = Math.min(1000 * this._reconnectAttempts, 5000);
                     console.log(`[ASR] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})`);
                     setTimeout(() => {
                         if (!this._closed) {
@@ -138,45 +128,22 @@ export class ElevenLabsASR {
     }
 
     /**
-     * Send silence frames very aggressively right after connection opens.
-     * This prevents ElevenLabs from closing the connection due to no audio data.
-     * μ-law silence = 0xFF byte value. 160 bytes = 20ms at 8kHz.
-     */
-    _startInitialSilence() {
-        this._stopInitialSilence();
-        const silence = Buffer.alloc(160, 0xFF);
-
-        // Send first burst immediately
-        if (this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(silence);
-        }
-
-        // Then every 100ms (simulates continuous audio stream)
-        this._initialSilenceInterval = setInterval(() => {
-            if (this.ws?.readyState === WebSocket.OPEN) {
-                this.ws.send(silence);
-            }
-        }, 100);
-    }
-
-    _stopInitialSilence() {
-        if (this._initialSilenceInterval) {
-            clearInterval(this._initialSilenceInterval);
-            this._initialSilenceInterval = null;
-        }
-    }
-
-    /**
-     * Normal keepalive: send silence every 2s to prevent idle disconnects.
+     * Send keepalive silence to prevent idle disconnect.
+     * Uses the JSON protocol: sends a silent audio chunk.
      */
     _startKeepalive() {
         this._stopKeepalive();
+        // Generate 160 bytes of μ-law silence (0xFF) as base64
+        const silenceBase64 = Buffer.alloc(160, 0xFF).toString('base64');
         this._keepaliveInterval = setInterval(() => {
-            if (this.ws?.readyState === WebSocket.OPEN) {
-                const silence = Buffer.alloc(160, 0xFF);
-                this.ws.send(silence);
+            if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
+                this.ws.send(JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: silenceBase64,
+                    sample_rate: 8000
+                }));
             }
-        }, 2000);
+        }, 5000);
     }
 
     _stopKeepalive() {
@@ -186,13 +153,20 @@ export class ElevenLabsASR {
         }
     }
 
+    /**
+     * Send audio to ElevenLabs ASR.
+     * @param {string} base64Audio - Base64-encoded μ-law 8kHz audio from Twilio
+     */
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
             if (!base64Audio) return;
-            const buffer = Buffer.from(base64Audio, 'base64');
-            if (buffer.length === 0) return;
 
-            this.ws.send(buffer);
+            // Send as JSON with the correct message format
+            this.ws.send(JSON.stringify({
+                message_type: 'input_audio_chunk',
+                audio_base_64: base64Audio,
+                sample_rate: 8000
+            }));
         }
     }
 
@@ -204,7 +178,6 @@ export class ElevenLabsASR {
         this._closed = true;
         this.isReady = false;
         this._stopKeepalive();
-        this._stopInitialSilence();
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.close(1000, 'call_ended');
         }
