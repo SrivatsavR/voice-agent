@@ -16,28 +16,23 @@ export class ElevenLabsASR {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Using query param for API key as some WebSocket proxies/environments 
-            // handle headers inconsistently. Also using the verified Realtime endpoint.
-            const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?xi-api-key=${apiKey}`;
+            // All configuration passed via query parameters as per the ElevenLabs Scribe API Reference.
+            // This includes the API key for maximal environment compatibility.
+            const params = new URLSearchParams({
+                'xi-api-key': apiKey,
+                'model_id': 'scribe_v2_realtime',
+                'audio_format': 'ulaw_8000',
+                'commit_strategy': 'auto',
+                'enable_logging': 'true'
+            });
+            const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
             this.ws = new WebSocket(url);
 
             this.ws.on('open', () => {
-                console.log('[ASR] WebSocket open, sending handshake...');
-
-                // Initial config message (handshake) as per ElevenLabs Scribe V2 Realtime schema
-                const config = {
-                    message_type: 'config',
-                    model_id: 'scribe_v2_realtime',
-                    audio_format: 'ulaw_8000',
-                    language_code: 'en',
-                    commit_strategy: 'auto',
-                    enable_logging: true
-                };
-
-                this.ws.send(JSON.stringify(config));
+                console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
+                // We assume readiness immediately as config is in the URL.
                 this.isReady = true;
-                console.log('[ASR] Handshake sent');
                 resolve();
             });
 
@@ -57,8 +52,6 @@ export class ElevenLabsASR {
                         if (text) console.log(`[ASR] partial: ${text}`);
                     } else if (msgType === 'input_error' || msgType === 'error') {
                         console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
-                    } else if (msgType === 'session_begin' || msgType === 'config_ack') {
-                        console.log(`[ASR] Session established (${msgType})`);
                     }
                 } catch (err) {
                     console.error('[ASR] Failed to parse message:', err.message);
@@ -81,6 +74,7 @@ export class ElevenLabsASR {
 
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
+            // Using 'audio_base_64' as the field name as per ElevenLabs Scribe V2 Realtime documentation.
             this.ws.send(JSON.stringify({
                 message_type: 'input_audio_chunk',
                 audio_base_64: base64Audio

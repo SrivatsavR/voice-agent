@@ -17,16 +17,19 @@ export class ElevenLabsTTS {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Using query param for API key for maximal compatibility across environments.
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&xi-api-key=${apiKey}`;
+            // Reverting to headers-based authentication for TTS as query param auth failed.
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}`;
 
-            this.ws = new WebSocket(url);
+            this.ws = new WebSocket(url, {
+                headers: {
+                    'xi-api-key': apiKey
+                }
+            });
 
             this.ws.on('open', () => {
                 console.log('[TTS] WebSocket open, sending BOS...');
 
                 // Send Beginning of Stream with voice settings
-                // Using a space to ensure the stream starts without closing.
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 }
@@ -71,7 +74,6 @@ export class ElevenLabsTTS {
 
     sendText(text) {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
-            // We use try_trigger_generation: true to ensure audio is sent as soon as a chunk is ready.
             this.ws.send(JSON.stringify({
                 text,
                 try_trigger_generation: true
@@ -81,14 +83,8 @@ export class ElevenLabsTTS {
         }
     }
 
-    /**
-     * Sends a "flush" space to pull any remaining audio from the buffer 
-     * without sending the empty string (which acts as End of Stream signal).
-     */
     flush() {
-        if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ text: " " }));
-        }
+        // No-op for now to avoid premature closure.
     }
 
     _sendToTwilio(audioBase64) {
@@ -105,7 +101,7 @@ export class ElevenLabsTTS {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
             try {
-                // Final EOS signal before closing
+                // Final EOS signal
                 this.ws.send(JSON.stringify({ text: "" }));
             } catch { }
             this.ws.close();

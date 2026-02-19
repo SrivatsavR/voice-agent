@@ -88,16 +88,31 @@ wss.on('connection', (ws) => {
         callSession = createCallSession(callerPhone);
 
         // Wait for TTS + ASR connections AND the welcome text in parallel
-        const [welcomeText] = await Promise.all([
-          callSession.getWelcome(),
-          tts.waitReady(),
-          asr.waitReady()
-        ]);
+        // Added a 5s timeout to prevent the call from hanging indefinitely if a service is slow.
+        const initTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Service initialization timed out')), 5000)
+        );
 
-        // Now TTS is guaranteed ready — speak the welcome
-        console.log(`[Welcome] ${welcomeText}`);
-        if (tts && welcomeText) {
-          tts.sendText(welcomeText);
+        try {
+          const [welcomeText] = await Promise.race([
+            Promise.all([
+              callSession.getWelcome(),
+              tts.waitReady(),
+              asr.waitReady()
+            ]),
+            initTimeout
+          ]);
+
+          // Now TTS is guaranteed ready — speak the welcome
+          console.log(`[Welcome] ${welcomeText}`);
+          if (tts && welcomeText) {
+            tts.sendText(welcomeText);
+          }
+        } catch (err) {
+          console.error(`[WS] Initialization failed: ${err.message}`);
+          // Still try to send welcome if callSession got it, but it might fail if TTS isn't ready
+          const welcome = await callSession.getWelcome().catch(() => 'Hello, thank you for calling.');
+          if (tts) tts.sendText(welcome);
         }
 
         break;
@@ -134,6 +149,10 @@ wss.on('connection', (ws) => {
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+
+console.log('[Server] Checking API Keys...');
+console.log(`  - OpenAI Key: ${process.env.OPENAI_API_KEY ? 'Present (startsWith ' + process.env.OPENAI_API_KEY.substring(0, 3) + ')' : 'MISSING'}`);
+console.log(`  - ElevenLabs Key: ${process.env.ELEVENLABS_API_KEY ? 'Present (startsWith ' + process.env.ELEVENLABS_API_KEY.substring(0, 3) + ')' : 'MISSING'}`);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
