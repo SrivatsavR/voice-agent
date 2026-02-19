@@ -29,10 +29,12 @@ export class ElevenLabsASR {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Note: audio_format is NOT a query param for the JSON protocol.
-            // Instead, sample_rate is sent per-chunk in the JSON message.
+            // CRITICAL: Specify audio_format in the connection URL.
+            // Twilio sends μ-law 8kHz audio, so we MUST tell ElevenLabs.
+            // Default is pcm_16000 which causes silent/garbled transcription.
             const params = new URLSearchParams({
                 model_id: 'scribe_v2_realtime',
+                audio_format: 'ulaw_8000',
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
