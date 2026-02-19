@@ -16,7 +16,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
-app.get('/', (req, res) => res.send('Voice AI Platform Active [v18]'));
+app.get('/', (req, res) => res.send('Voice AI Platform Active [v19]'));
 
 app.post('/incoming', (req, res) => {
   const caller = req.body.From || 'unknown';
@@ -147,5 +147,5 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v18-ASR-Audio-Format-Fix]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v19-VAD-Commit-Strategy]`);
 });

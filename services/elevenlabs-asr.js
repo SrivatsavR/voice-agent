@@ -29,12 +29,18 @@ export class ElevenLabsASR {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // CRITICAL: Specify audio_format in the connection URL.
-            // Twilio sends μ-law 8kHz audio, so we MUST tell ElevenLabs.
-            // Default is pcm_16000 which causes silent/garbled transcription.
+            // CRITICAL configuration via query parameters:
+            // 1. audio_format=ulaw_8000: Twilio sends μ-law 8kHz (default pcm_16000 = garbled)
+            // 2. commit_strategy=vad: Auto-commit transcript when silence detected
+            //    (default is 'manual' which only sends partial_transcript, never committed)
+            // 3. vad_silence_threshold_secs=1.0: Commit after 1s silence (responsive for voice agent)
+            // 4. language_code=en: Optimize for English
             const params = new URLSearchParams({
                 model_id: 'scribe_v2_realtime',
                 audio_format: 'ulaw_8000',
+                language_code: 'en',
+                commit_strategy: 'vad',
+                vad_silence_threshold_secs: '1.0',
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
