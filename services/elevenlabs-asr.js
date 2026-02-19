@@ -9,7 +9,6 @@ export class ElevenLabsASR {
         this.onTranscript = onTranscript;
         this.ws = null;
         this.isReady = false;
-        this._heartbeatInterval = null;
         this._connectPromise = this._connect();
     }
 
@@ -17,7 +16,13 @@ export class ElevenLabsASR {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Adding inactivity_timeout and ensuring the model is scribe_v2_realtime
+            /**
+             * ElevenLabs Scribe V2 Realtime Protocol (v5-fix):
+             * 1. URL params for config.
+             * 2. Headers for auth.
+             * 3. No manual 'config' message.
+             * 4. Audio chunks use 'audio_base_64' (standard) or 'audio'.
+             */
             const params = new URLSearchParams({
                 model_id: 'scribe_v2_realtime',
                 audio_format: 'ulaw_8000',
@@ -34,7 +39,6 @@ export class ElevenLabsASR {
             this.ws.on('open', () => {
                 console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
                 this.isReady = true;
-                this._startHeartbeat();
                 resolve();
             });
 
@@ -44,62 +48,49 @@ export class ElevenLabsASR {
                     const msgType = response.message_type || response.type;
 
                     if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
-                        const text = (response.text || response.data?.text || '').trim();
+                        // Check both 'text' and 'transcript' fields to be safe.
+                        const text = (response.text || response.transcript || response.data?.text || '').trim();
                         if (text && this.onTranscript) {
                             console.log(`[ASR] FINAL: ${text}`);
                             this.onTranscript(text);
                         }
                     } else if (msgType === 'partial_transcript') {
-                        const text = (response.text || '').trim();
+                        const text = (response.text || response.transcript || '').trim();
                         if (text) console.log(`[ASR] partial: ${text}`);
                     } else if (msgType === 'input_error' || msgType === 'error') {
                         console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
-                    } else if (msgType === 'session_begin') {
-                        console.log('[ASR] Session started by server');
+                    } else if (msgType === 'session_begin' || msgType === 'session_started') {
+                        console.log(`[ASR] Session started by server (${msgType})`);
+                    } else {
+                        // console.log(`[ASR] Message received: ${msgType}`);
                     }
-                } catch (err) { }
+                } catch (err) {
+                    // Ignore binary or non-JSON
+                }
             });
 
             this.ws.on('error', (err) => {
                 console.error('[ASR] WebSocket Error:', err.message);
                 this.isReady = false;
-                this._stopHeartbeat();
                 resolve();
             });
 
             this.ws.on('close', (code, reason) => {
                 console.log(`[ASR] Disconnected (code=${code}, reason=${reason})`);
                 this.isReady = false;
-                this._stopHeartbeat();
                 resolve();
             });
         });
     }
 
-    _startHeartbeat() {
-        this._stopHeartbeat();
-        this._heartbeatInterval = setInterval(() => {
-            if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
-                // Keep-alive heartbeat for ASR
-                // Using an empty ping-like message if supported, 
-                // but since ASR is input-driven, we just ensure the socket doesn't idle.
-                this.ws.ping();
-            }
-        }, 15000);
-    }
-
-    _stopHeartbeat() {
-        if (this._heartbeatInterval) {
-            clearInterval(this._heartbeatInterval);
-            this._heartbeatInterval = null;
-        }
-    }
-
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
+            // Sending both audio_base_64 and audio for maximal compatibility.
+            // Scribe V2 Realtime uses 'audio_base_64', but some legacy variants use 'audio'.
             this.ws.send(JSON.stringify({
                 message_type: 'input_audio_chunk',
-                audio_base_64: base64Audio
+                audio_base_64: base64Audio,
+                audio: base64Audio
             }));
         }
     }
@@ -110,9 +101,14 @@ export class ElevenLabsASR {
 
     close() {
         this.isReady = false;
-        this._stopHeartbeat();
         if (this.ws?.readyState === WebSocket.OPEN) {
-            try { this.ws.send(JSON.stringify({ message_type: 'eos' })); } catch { }
+            try {
+                // Using an empty audio chunk as EOS instead of message_type: 'eos'
+                this.ws.send(JSON.stringify({
+                    message_type: 'input_audio_chunk',
+                    audio_base_64: ""
+                }));
+            } catch { }
             this.ws.close();
         }
     }
