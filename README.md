@@ -1,4 +1,4 @@
-# Voice AI Platform (Meesho Demo)
+# Voice AI Platform
 
 This project implements a low-latency voice AI platform using:
 - **Twilio Media Streams** for telephony audio.
