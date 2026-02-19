@@ -116,10 +116,13 @@ export class ElevenLabsTTS {
      */
     flush() {
         if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                text: " ",
-                try_trigger_generation: true
-            }));
+            // Sending multiple spaces with try_trigger_generation helps flush the buffer
+            for (let i = 0; i < 3; i++) {
+                this.ws.send(JSON.stringify({
+                    text: " ",
+                    try_trigger_generation: true
+                }));
+            }
         }
     }
 

@@ -16,28 +16,18 @@ export class ElevenLabsASR {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            /**
-             * ElevenLabs Scribe V2 Realtime Protocol (v5-fix):
-             * 1. URL params for config.
-             * 2. Headers for auth.
-             * 3. No manual 'config' message.
-             * 4. Audio chunks use 'audio_base_64' (standard) or 'audio'.
-             */
             const params = new URLSearchParams({
-                model_id: 'scribe_v2_realtime',
-                audio_format: 'ulaw_8000',
-                inactivity_timeout: '180'
+                model_id: 'scribe_v2',
+                audio_format: 'ulaw_8000'
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
             this.ws = new WebSocket(url, {
-                headers: {
-                    'xi-api-key': apiKey
-                }
+                headers: { 'xi-api-key': apiKey }
             });
 
             this.ws.on('open', () => {
-                console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
+                console.log('[ASR] Connected to ElevenLabs Scribe V2');
                 this.isReady = true;
                 resolve();
             });
@@ -48,7 +38,6 @@ export class ElevenLabsASR {
                     const msgType = response.type || response.message_type;
 
                     if (msgType === 'transcript' || msgType === 'committed_transcript' || msgType === 'final_transcript') {
-                        // For Scribe V2 Realtime, 'transcript' contains the text.
                         const text = (response.transcript || response.text || '').trim();
                         if (text && this.onTranscript) {
                             console.log(`[ASR] ${msgType.toUpperCase()}: ${text}`);
@@ -57,13 +46,13 @@ export class ElevenLabsASR {
                     } else if (msgType === 'partial_transcript') {
                         const text = (response.transcript || response.text || '').trim();
                         if (text) console.log(`[ASR] partial: ${text}`);
-                    } else if (msgType === 'error') {
-                        console.error('[ASR] Server error:', response.error || response.message);
+                    } else if (msgType === 'error' || response.error) {
+                        console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
                     } else if (msgType === 'session_started') {
-                        console.log(`[ASR] Session started by server`);
+                        console.log(`[ASR] Session started`);
                     }
                 } catch (err) {
-                    // Ignore binary or non-JSON
+                    // Ignore binary
                 }
             });
 
