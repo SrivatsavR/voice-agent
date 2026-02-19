@@ -74,7 +74,6 @@ wss.on('connection', (ws) => {
           // Speak the agent's response
           if (say && tts) {
             tts.sendText(say);
-            tts.flush();
           }
 
           // Handle terminal nodes — log session and hang up after TTS drains
