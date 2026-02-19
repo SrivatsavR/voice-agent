@@ -31,8 +31,8 @@ export class ElevenLabsASR {
 
                 // Send config message for audio format and VAD
                 const initMessage = {
-                    type: 'config',
-                    audio_format: 'mulaw_8000',
+                    message_type: 'config',
+                    audio_format: 'ulaw_8000',
                     commit_strategy: 'auto',
                     vad_silence_threshold_secs: 1.0,
                     vad_threshold: 0.4,
@@ -52,7 +52,7 @@ export class ElevenLabsASR {
                     const response = JSON.parse(data);
                     const msgType = response.message_type || response.type;
 
-                    if (msgType === 'transcript' || msgType === 'final_transcript') {
+                    if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
                         const text = (response.text || response.data?.text || '').trim();
                         if (text && this.onTranscript) {
                             console.log(`[ASR] FINAL: ${text}`);
@@ -90,7 +90,7 @@ export class ElevenLabsASR {
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
             this.ws.send(JSON.stringify({
-                type: 'audio',
+                message_type: 'input_audio_chunk',
                 audio: base64Audio
             }));
         }
@@ -103,7 +103,7 @@ export class ElevenLabsASR {
     close() {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
-            try { this.ws.send(JSON.stringify({ type: 'eos' })); } catch { }
+            try { this.ws.send(JSON.stringify({ message_type: 'eos' })); } catch { }
             this.ws.close();
         }
     }

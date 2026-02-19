@@ -22,7 +22,9 @@ app.post('/incoming', (req, res) => {
   res.send(`
     <Response>
       <Connect>
-        <Stream url="wss://${req.headers.host}/media-stream" />
+        <Stream url="wss://${req.headers.host}/media-stream">
+          <Parameter name="caller_phone" value="${req.body.From}" />
+        </Stream>
       </Connect>
     </Response>
   `);
