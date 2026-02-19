@@ -118,6 +118,9 @@ wss.on('connection', (ws) => {
     else if (msg.event === 'stop') {
       console.log('[WS] Stop command from Twilio');
       isActive = false;
+      // Gracefully close services on stop
+      asr?.close();
+      tts?.close();
     }
   });
 
@@ -131,5 +134,5 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v13-ASR-Model-Fix]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v14-Connection-Stability]`);
 });
