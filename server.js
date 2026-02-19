@@ -16,7 +16,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
-app.get('/', (req, res) => res.send('Voice AI Platform Active [v11]'));
+app.get('/', (req, res) => res.send('Voice AI Platform Active [v17]'));
 
 app.post('/incoming', (req, res) => {
   const caller = req.body.From || 'unknown';
@@ -60,6 +60,7 @@ wss.on('connection', (ws) => {
   let callSession = null;
   let isActive = true;
   let ignoreAsrUntil = 0;
+  let activeStreamSid = null;  // Track which stream is active
 
   console.log('[WS] Connection accepted');
 
@@ -70,13 +71,14 @@ wss.on('connection', (ws) => {
     if (msg.event === 'start') {
       const streamSid = msg.start.streamSid;
       const callerPhone = msg.start.customParameters?.caller_phone ?? '';
+      activeStreamSid = streamSid;
       console.log(`[WS] Stream starting: ${streamSid}`);
 
       tts = new ElevenLabsTTS(ws, streamSid);
       asr = new ElevenLabsASR(async (transcript) => {
         try {
           if (!transcript?.trim() || !isActive) return;
-          if (Date.now() < ignoreAsrUntil) return; // Mute agent's propia voice (echo)
+          if (Date.now() < ignoreAsrUntil) return; // Mute agent's own voice (echo)
 
           console.log(`[User] ${transcript}`);
           const result = await callSession.processTranscript(transcript);
@@ -116,16 +118,27 @@ wss.on('connection', (ws) => {
       if (isActive) asr?.sendAudio(msg.media.payload);
     }
     else if (msg.event === 'stop') {
-      console.log('[WS] Stop command from Twilio');
-      isActive = false;
-      // Gracefully close services on stop
-      asr?.close();
-      tts?.close();
+      // IMPORTANT: Do NOT tear down ASR/TTS here.
+      // Twilio can send 'stop' prematurely or for a previous stream.
+      // The actual cleanup should only happen on ws.close.
+      // If the caller truly hung up, Twilio will also close the WebSocket.
+      const stopStreamSid = msg.stop?.streamSid || 'unknown';
+      console.log(`[WS] Stop command from Twilio (streamSid=${stopStreamSid}, active=${activeStreamSid})`);
+
+      // Only mark inactive if this stop is for our active stream
+      if (stopStreamSid === activeStreamSid) {
+        console.log('[WS] Stop is for active stream — marking inactive, waiting for WS close');
+        isActive = false;
+        // Do NOT close ASR/TTS here — let the ws.close handler do it.
+        // This prevents premature teardown if the stop arrives early.
+      } else {
+        console.log('[WS] Stop is for a different/unknown stream — ignoring');
+      }
     }
   });
 
   ws.on('close', () => {
-    console.log('[WS] Connection closed');
+    console.log('[WS] Connection closed — cleaning up all services');
     isActive = false;
     asr?.close();
     tts?.close();
@@ -134,5 +147,5 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v16-JSON-Protocol-Fix]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v17-Stop-Event-Fix]`);
 });
