@@ -32,11 +32,11 @@ export class ElevenLabsTTS {
                 this.isReady = true;
                 console.log('[TTS] Connected');
 
-                // Reduced chunk_length_schedule for lower latency
+                // Minimum allowed chunk_length_schedule item is 50
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                    generation_config: { chunk_length_schedule: [10] }
+                    generation_config: { chunk_length_schedule: [50] }
                 }));
 
                 this._startHeartbeat();
