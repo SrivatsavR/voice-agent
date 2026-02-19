@@ -16,18 +16,25 @@ const wss = new WebSocketServer({ server });
 
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
+app.get('/', (req, res) => {
+  res.send('Voice AI Platform is running!');
+});
+
 app.post('/incoming', (req, res) => {
-  console.log('[Twilio] Incoming call');
-  res.set('Content-Type', 'text/xml');
-  res.send(`
-    <Response>
-      <Connect>
-        <Stream url="wss://${req.headers.host}/media-stream">
-          <Parameter name="caller_phone" value="${req.body.From}" />
+  console.log('[Twilio] Incoming call from:', req.body.From || 'unknown');
+
+  const host = req.headers.host;
+  const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="wss://${host}/media-stream">
+            <Parameter name="caller_phone" value="${req.body.From || ''}" />
         </Stream>
-      </Connect>
-    </Response>
-  `);
+    </Connect>
+</Response>`;
+
+  res.set('Content-Type', 'text/xml');
+  res.send(twimlResponse);
 });
 
 // ─── WebSocket (Media Stream) ─────────────────────────────────────────────────
