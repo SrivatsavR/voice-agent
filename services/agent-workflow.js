@@ -1,12 +1,6 @@
-import { z } from 'zod';
 import { Agent, Runner, withTrace } from '@openai/agents';
 
 // ─── ASR Voice Context (injected into every node) ────────────────────────────
-// These instructions handle the realities of voice transcription:
-//   - filler words, partial utterances
-//   - numbers spoken as words
-//   - spellings (email, GSTIN)
-//   - short, TTS-friendly responses (no symbols/markdown)
 const ASR_VOICE_CONTEXT = `
 IMPORTANT — Voice & ASR context (apply to every response):
 - You are on an outbound phone call. The caller's words come from a speech-to-text (ASR) system and may contain:
@@ -20,15 +14,15 @@ IMPORTANT — Voice & ASR context (apply to every response):
 - "say" field MUST be plain spoken language — no bullet points, no markdown, no symbols. It will be read aloud by TTS.
 - Keep responses concise: 1–2 sentences max unless summarizing or confirming details.
 - Ask only ONE question at a time.
-`;
 
-// ─── Shared Output Schema ─────────────────────────────────────────────────────
-const NodeOutputSchema = z.object({
-    say: z.string().describe("What to speak via TTS. Plain language only — no symbols or markdown."),
-    updates: z.record(z.any()).describe("Key-value pairs to merge into the session state."),
-    next_node: z.string().describe("The next routing target node name."),
-    notes: z.string().describe("Internal reasoning or debug notes. Never spoken aloud.")
-});
+You MUST return ONLY valid JSON in this exact format — no other text, no wrapping:
+{
+  "say": "text to speak aloud",
+  "updates": { "key": "value" },
+  "next_node": "TARGET_NODE",
+  "notes": "internal reasoning"
+}
+`;
 
 // ─── NODE 0: Welcome ──────────────────────────────────────────────────────────
 const welcomeAgent = new Agent({
@@ -37,9 +31,8 @@ const welcomeAgent = new Agent({
     
 Speak the exact welcome line only. Do not ask any questions.
 Say verbatim: "Hello, thank you for calling Meesho. This is the reseller onboarding team."
-Set next_node to "NODE_1_NAME_INTEREST". Leave updates empty.`,
+Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object {}.`,
     model: "gpt-4o",
-    outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.2, topP: 1, maxTokens: 256, store: true }
 });
 
@@ -73,11 +66,8 @@ UNCLEAR / NO ANSWER: ask ONE clarifying question → next_node: NODE_1_NAME_INTE
 - callback_time: the time they request (e.g. "tomorrow morning", "4pm today")
 - call_outcome: "not_interested" | "wrong_person" | "callback" — only on terminal routing
 
-If caller refuses to share name → set name_spoken to "no_name", still ask interest.
-
-Return ONLY the JSON output.`,
+If caller refuses to share name → set name_spoken to "no_name", still ask interest.`,
     model: "gpt-4o",
-    outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 512, store: true }
 });
 
@@ -113,15 +103,12 @@ Only advance to the next question once the current answer is valid. If a field i
 - Otherwise → next_node: NODE_2_DETAILS
 
 === EXTRACTION (updates) ===
-- products_sold: string or array of strings
+- products_sold: array of strings e.g. ["kurtis", "leggings"]
 - price_min: number
 - price_max: number
 - switch_speed_days: number (if convertible)
-- switch_speed_bucket: string (if not convertible to days)
-
-Return ONLY the JSON output.`,
+- switch_speed_bucket: string (if not convertible to days)`,
     model: "gpt-4o",
-    outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 768, store: true }
 });
 
@@ -158,16 +145,13 @@ Q2 — If GSTIN not yet collected or valid (and not skipped): "Could you share y
 
 === EXTRACTION (updates) ===
 - email: string (normalized)
-- email_valid: boolean
+- email_valid: true or false
 - email_attempts: number (increment on failure)
 - gstin: string or null
-- gstin_valid: boolean
-- gst_skipped: boolean
-- gst_attempts: number (increment on failure)
-
-Return ONLY the JSON output.`,
+- gstin_valid: true or false
+- gst_skipped: true or false
+- gst_attempts: number (increment on failure)`,
     model: "gpt-4o",
-    outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true }
 });
 
@@ -203,12 +187,9 @@ Then ask: "Is all of that correct?"
   set call_outcome: "qualified" (or "incomplete" if email_valid=false or critical fields missing)
 
 === EXTRACTION (updates) ===
-- summary_confirmed: boolean
-- call_outcome: "qualified" | "incomplete"
-
-Return ONLY the JSON output.`,
+- summary_confirmed: true or false
+- call_outcome: "qualified" | "incomplete"`,
     model: "gpt-4o",
-    outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 768, store: true }
 });
 
@@ -264,17 +245,32 @@ const DEFAULT_SESSION = {
     node4_done: false,
 };
 
+// ─── Helper: Parse agent output ───────────────────────────────────────────────
+
+function parseAgentOutput(rawOutput) {
+    if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
+
+    let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
+
+    // Strip markdown code fences if present (```json ... ```)
+    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+    try {
+        const parsed = JSON.parse(text);
+        return {
+            say: parsed.say ?? '',
+            updates: (parsed.updates && typeof parsed.updates === 'object') ? parsed.updates : {},
+            next_node: parsed.next_node ?? 'CONTINUE',
+            notes: parsed.notes ?? ''
+        };
+    } catch {
+        console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
+        return { say: String(text), updates: {}, next_node: 'CONTINUE', notes: 'parse_error' };
+    }
+}
+
 // ─── Session Factory ──────────────────────────────────────────────────────────
 
-/**
- * Creates a stateful call session with multi-node agent routing.
- *
- * Usage:
- *   const session = createCallSession(callerPhone);
- *   const welcome = await session.getWelcome();     // speak once on call start
- *   const result  = await session.processTranscript(text); // on each ASR transcript
- *   if (session.isTerminal()) { ... close call ... }
- */
 export function createCallSession(callerPhone = '') {
     const conversationHistory = [];
     const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
@@ -314,25 +310,16 @@ export function createCallSession(callerPhone = '') {
 
     // ── Public API ──────────────────────────────────────────────────────────
 
-    /**
-     * Run NODE_0_WELCOME once at call start. Returns the text to speak.
-     * @returns {Promise<string>}
-     */
     async function getWelcome() {
-        const output = await runNode(welcomeAgent, 'Start the call.');
-        if (output?.updates) Object.assign(session, output.updates);
+        const raw = await runNode(welcomeAgent, 'Start the call.');
+        const output = parseAgentOutput(raw);
+        if (output.updates) Object.assign(session, output.updates);
         markNodeDone('NODE_0_WELCOME');
-        currentNode = output?.next_node ?? 'NODE_1_NAME_INTEREST';
-        return output?.say ?? "Hello, thank you for calling Meesho. This is the reseller onboarding team.";
+        currentNode = output.next_node === 'CONTINUE' ? 'NODE_1_NAME_INTEREST' : output.next_node;
+        return output.say || "Hello, thank you for calling Meesho. This is the reseller onboarding team.";
     }
 
-    /**
-     * Process a caller transcript through the current node agent.
-     * @param {string} transcript - ASR transcript from the caller
-     * @returns {Promise<{ say: string, next_node: string, notes: string, session: object }>}
-     */
     async function processTranscript(transcript) {
-        // Already terminal — do nothing
         if (TERMINAL_NODES.has(currentNode)) {
             return {
                 say: '',
@@ -353,23 +340,23 @@ export function createCallSession(callerPhone = '') {
             };
         }
 
-        // Inject session state for closure node so it can accurately summarize
+        // Inject session state for closure node
         let userMessage = transcript;
         if (currentNode === 'NODE_4_CLOSURE') {
             userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
         }
 
-        const output = await runNode(agent, userMessage);
+        const raw = await runNode(agent, userMessage);
+        const output = parseAgentOutput(raw);
 
         // Merge updates into session
-        if (output?.updates && typeof output.updates === 'object') {
+        if (output.updates && typeof output.updates === 'object') {
             Object.assign(session, output.updates);
         }
 
         const prevNode = currentNode;
-        const nextNode = output?.next_node ?? currentNode;
+        const nextNode = output.next_node === 'CONTINUE' ? currentNode : output.next_node;
 
-        // Mark previous node done if we're advancing
         if (nextNode !== prevNode) {
             markNodeDone(prevNode);
         }
@@ -377,9 +364,9 @@ export function createCallSession(callerPhone = '') {
         currentNode = nextNode;
 
         return {
-            say: output?.say ?? '',
+            say: output.say,
             next_node: nextNode,
-            notes: output?.notes ?? '',
+            notes: output.notes,
             session: { ...session }
         };
     }
