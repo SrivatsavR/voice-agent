@@ -2,8 +2,8 @@ import { WebSocket } from 'ws';
 
 /**
  * ElevenLabs TTS WebSocket (Output)
- * Note: ElevenLabs TTS returns audio as base64 within a JSON message.
- * Sending binary messages to Twilio that aren't verified audio causes static.
+ * We strictly filter JSON messages to extract the 'audio' field.
+ * This prevents binary pings or metadata from being sent to Twilio as static.
  */
 const VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
 const MODEL_ID = 'eleven_flash_v2_5';
@@ -22,8 +22,7 @@ export class ElevenLabsTTS {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // max inactivity_timeout = 180s. 
-            // We removed the "space" heartbeat to prevent any potential low-level noise synthesis.
+            // max inactivity_timeout = 180s
             const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180`;
 
             this.ws = new WebSocket(url, {
@@ -32,26 +31,29 @@ export class ElevenLabsTTS {
 
             this.ws.on('open', () => {
                 this.isReady = true;
-                console.log('[TTS] Connected to ElevenLabs');
+                console.log('[TTS] Connected to ElevenLabs (v10)');
                 resolve();
             });
 
             this.ws.on('message', (data) => {
                 try {
-                    // CRITICAL: We only process JSON messages. 
-                    // Binary messages from ElevenLabs (like pings) should NOT be forwarded to Twilio.
-                    if (typeof data !== 'string') return;
+                    // Convert Buffer to string if necessary
+                    const messageString = data.toString();
 
-                    const response = JSON.parse(data);
+                    // ElevenLabs real-time TTS sends audio within a JSON wrapper.
+                    // If we can't parse it as JSON, it's likely a binary ping/metadata frame—ignore it to avoid static.
+                    const response = JSON.parse(messageString);
+
                     if (response.audio) {
+                        // Extract base64 mulaw audio and ship to Twilio
                         this._sendToTwilio(response.audio);
                     }
 
                     if (response.error) {
-                        console.error('[TTS] Server error:', response.error);
+                        console.error('[TTS] ElevenLabs error:', response.error);
                     }
                 } catch (err) {
-                    // Ignore parsing errors for non-JSON strings
+                    // This catch handles binary pings or malformed frames—ignoring them prevents static noise.
                 }
             });
 
@@ -75,6 +77,7 @@ export class ElevenLabsTTS {
 
     sendText(text) {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
+            console.log(`[TTS] Generating audio for: "${text.substring(0, 40)}..."`);
             this.ws.send(JSON.stringify({
                 text,
                 voice_settings: { stability: 0.5, similarity_boost: 0.8 },
@@ -84,7 +87,7 @@ export class ElevenLabsTTS {
     }
 
     _sendToTwilio(audioBase64) {
-        if (this.twilioWs.readyState === WebSocket.OPEN) {
+        if (this.twilioWs?.readyState === WebSocket.OPEN) {
             this.twilioWs.send(JSON.stringify({
                 event: 'media',
                 streamSid: this.streamSid,
