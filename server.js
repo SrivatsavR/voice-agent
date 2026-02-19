@@ -167,7 +167,7 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v8-Eco-Guard-Stability]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v9-Clean-Audio-Final]`);
 });
 
 process.on('unhandledRejection', (reason) => console.error('[Fatal Rejection]', reason));
