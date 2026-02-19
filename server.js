@@ -51,13 +51,8 @@ wss.on('connection', (ws) => {
         const callerPhone = msg.start.customParameters?.caller_phone ?? '';
         console.log(`[WS] Stream started: ${streamSid}`);
 
-        // Initialize TTS first so it can connect while welcome runs
+        // Initialize TTS and ASR — start connections in parallel
         tts = new ElevenLabsTTS(ws, streamSid);
-
-        // Initialize the agent session
-        callSession = createCallSession(callerPhone);
-
-        // Initialize ASR — transcripts feed through the node state machine
         asr = new ElevenLabsASR(async (transcript) => {
           if (!transcript?.trim()) return;
           console.log(`[User] ${transcript}`);
@@ -81,16 +76,21 @@ wss.on('connection', (ws) => {
           }
         });
 
-        // Speak the welcome line
-        try {
-          const welcomeText = await callSession.getWelcome();
-          console.log(`[Welcome] ${welcomeText}`);
-          if (tts && welcomeText) {
-            tts.sendText(welcomeText);
-            tts.flush();
-          }
-        } catch (err) {
-          console.error('[Welcome] Agent error:', err);
+        // Initialize the agent session
+        callSession = createCallSession(callerPhone);
+
+        // Wait for TTS + ASR connections AND the welcome text in parallel
+        const [welcomeText] = await Promise.all([
+          callSession.getWelcome(),
+          tts.waitReady(),
+          asr.waitReady()
+        ]);
+
+        // Now TTS is guaranteed ready — speak the welcome
+        console.log(`[Welcome] ${welcomeText}`);
+        if (tts && welcomeText) {
+          tts.sendText(welcomeText);
+          tts.flush();
         }
 
         break;
