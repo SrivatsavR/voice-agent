@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
 import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
@@ -17,21 +17,14 @@ const wss = new WebSocketServer({ noServer: true });
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
-  console.log('[Health] Root hit');
-  res.send('Voice AI Platform is running!');
+  res.send('Voice AI Platform is running! [v8-Final-Stability]');
 });
 
 app.post('/incoming', (req, res) => {
   const caller = req.body.From || 'unknown';
   console.log(`[Twilio] Incoming call from: ${caller}`);
-
-  // Log all relevant headers to see what Railway's proxy is providing
-  console.log(`[Twilio] Headers: host=${req.headers.host}, x-forwarded-host=${req.headers['x-forwarded-host']}, hostname=${req.hostname}`);
-
-  // Use req.hostname to avoid any internal port issues from req.headers.host
   const host = req.hostname;
   const streamUrl = `wss://${host}/media-stream`;
-  console.log(`[Twilio] Returning Stream URL: ${streamUrl}`);
 
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -50,14 +43,11 @@ app.post('/incoming', (req, res) => {
 
 server.on('upgrade', (request, socket, head) => {
   const { pathname } = new URL(request.url, `http://${request.headers.host}`);
-  console.log(`[HTTP] Upgrade request for ${pathname} from ${request.headers.host}`);
-
   if (pathname === '/media-stream') {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
   } else {
-    console.log(`[HTTP] Rejecting upgrade for ${pathname}`);
     socket.destroy();
   }
 });
@@ -71,6 +61,7 @@ wss.on('connection', (ws) => {
   let tts = null;
   let callSession = null;
   let isActive = true;
+  let ignoreAsrUntil = 0; // Timestamp to prevent echo/self-interruption
 
   ws.on('message', async (message) => {
     let msg;
@@ -86,21 +77,23 @@ wss.on('connection', (ws) => {
         const callerPhone = msg.start.customParameters?.caller_phone ?? '';
         console.log(`[WS] Stream started: ${streamSid}`);
 
-        // Initialize TTS and ASR — start connections in parallel
+        // Initialize Services
         tts = new ElevenLabsTTS(ws, streamSid);
         asr = new ElevenLabsASR(async (transcript) => {
           try {
             if (!transcript?.trim() || !isActive) return;
-            console.log(`[ASR] Transcript: "${transcript}"`);
 
-            if (!callSession) {
-              console.warn('[ASR] Received transcript before session fully initialized.');
+            // Self-Interruption Guard: If we JUST started speaking the welcome, ignore ASR echos
+            if (Date.now() < ignoreAsrUntil) {
+              console.log(`[ASR] Ignoring echoed transcript: "${transcript}"`);
               return;
             }
 
+            console.log(`[User] ${transcript}`);
+
             const prevNode = callSession.getCurrentNode();
             const { say, next_node, session } = await callSession.processTranscript(transcript);
-            console.log(`[Workflow] ${prevNode} → ${next_node} | Say: ${say}`);
+            console.log(`[Workflow] ${prevNode} → ${next_node} | say length: ${say?.length || 0}`);
 
             if (say && tts && isActive) {
               tts.sendText(say);
@@ -110,8 +103,7 @@ wss.on('connection', (ws) => {
               isActive = false;
               console.log(`[Terminal] outcome=${session.call_outcome} | node=${next_node}`);
               setTimeout(() => {
-                console.log('[WS] Closing due to terminal state');
-                if (ws.readyState === ws.OPEN) ws.close();
+                if (ws.readyState === WebSocket.OPEN) ws.close();
               }, 7000);
             }
           } catch (err) {
@@ -119,23 +111,28 @@ wss.on('connection', (ws) => {
           }
         });
 
-        // Initialize the agent session
+        // Initialize Workflow
         callSession = createCallSession(callerPhone);
 
-        // Wait for services
-        const welcomeText = "Hello, thank you for calling Meesho. This is the reseller onboarding team.";
-
         try {
-          const initTimeout = new Promise((_, reject) => setTimeout(() => reject('Timeout'), 5000));
+          // Wait for connections with a 5s limit
+          const initTimeout = new Promise((_, reject) => setTimeout(() => reject('Init Timeout'), 5000));
           await Promise.race([
             Promise.all([tts.waitReady(), asr.waitReady()]),
             initTimeout
-          ]).catch(e => console.warn('[WS] Service init slow/failed, proceeding anyway...'));
+          ]).catch(e => console.warn('[WS] Service init slow, trying anyway...'));
 
-          console.log(`[Welcome] ${welcomeText}`);
-          if (tts && isActive) tts.sendText(welcomeText);
+          // Get welcome text (proper state machine start)
+          const welcome = await callSession.getWelcome();
+          console.log(`[Welcome] ${welcome}`);
+
+          if (tts && isActive) {
+            // Set lock for 6 seconds (roughly length of welcome message) to prevent echo interference
+            ignoreAsrUntil = Date.now() + 6000;
+            tts.sendText(welcome);
+          }
         } catch (err) {
-          console.error('[Welcome Error]', err);
+          console.error('[Welcome Init Error]', err);
         }
 
         break;
@@ -159,9 +156,6 @@ wss.on('connection', (ws) => {
     isActive = false;
     asr?.close();
     tts?.close();
-    if (callSession) {
-      console.log('[Final Session State]', JSON.stringify(callSession.getSession(), null, 2));
-    }
   });
 
   ws.on('error', (err) => {
@@ -171,21 +165,10 @@ wss.on('connection', (ws) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-console.log('[Server] Startup Diagnostic:');
-const openAiKey = process.env.OPENAI_API_KEY || '';
-const elKey = process.env.ELEVENLABS_API_KEY || '';
-console.log(`  - OpenAI Key: ${openAiKey ? 'Present (' + openAiKey.substring(0, 7) + '...)' : 'MISSING'}`);
-console.log(`  - ElevenLabs Key: ${elKey ? 'Present (' + elKey.substring(0, 7) + '...)' : 'MISSING'}`);
-
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: Fixed-ASR-Protocol-v7-Final]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v8-Eco-Guard-Stability]`);
 });
 
-// Global Error Handling
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', (err) => {
-  console.error('[Fatal] Uncaught Exception:', err);
-});
+process.on('unhandledRejection', (reason) => console.error('[Fatal Rejection]', reason));
+process.on('uncaughtException', (err) => console.error('[Fatal Exception]', err));
