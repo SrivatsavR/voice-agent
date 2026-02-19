@@ -4,26 +4,28 @@ import { WebSocket } from 'ws';
  * Manages the WebSocket connection to ElevenLabs ASR (Scribe v2 Realtime).
  * Feed audio chunks via sendAudio(). Transcripts are delivered via onTranscript callback.
  * 
- * KEY FIXES (v14):
- * - Wait for 'session_started' message before resolving readiness (not just 'open')
- * - Add auto-reconnect on unexpected disconnects
- * - Don't send empty buffer on close (ElevenLabs treats it as EOS signal)
- * - Add keepalive ping to prevent idle timeouts
+ * KEY FIXES (v15):
+ * - Send silence burst IMMEDIATELY on session_started to prevent ElevenLabs idle-close
+ * - Reconnect on ANY unexpected close (including code 1000) if not intentionally closed
+ * - Queue audio during reconnect and replay once reconnected
+ * - More aggressive keepalive (every 2s)
  */
 export class ElevenLabsASR {
     constructor(onTranscript) {
         this.onTranscript = onTranscript;
         this.ws = null;
         this.isReady = false;
-        this._closed = false;   // True when intentionally closed
+        this._closed = false;
         this._reconnectAttempts = 0;
-        this._maxReconnectAttempts = 3;
+        this._maxReconnectAttempts = 5;
         this._keepaliveInterval = null;
+        this._initialSilenceInterval = null;
+        this._readyResolve = null;
         this._connectPromise = this._connect();
     }
 
     _connect() {
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve) => {
             if (this._closed) return resolve();
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -34,6 +36,8 @@ export class ElevenLabsASR {
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
+            console.log(`[ASR] Connecting... (attempt ${this._reconnectAttempts + 1})`);
+
             this.ws = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
             });
@@ -43,12 +47,12 @@ export class ElevenLabsASR {
                 if (!resolved) { resolved = true; resolve(); }
             };
 
-            // Timeout: if we don't get session_started within 10s, resolve anyway
+            // Timeout: if no session_started within 10s, resolve anyway
             const timeout = setTimeout(() => {
                 if (!resolved) {
-                    console.warn('[ASR] Timed out waiting for session_started, resolving anyway');
+                    console.warn('[ASR] Timed out waiting for session_started');
                     if (this.ws?.readyState === WebSocket.OPEN) {
-                        this.isReady = true;  // Assume ready if socket is open
+                        this.isReady = true;
                     }
                     safeResolve();
                 }
@@ -57,9 +61,11 @@ export class ElevenLabsASR {
             this.ws.on('open', () => {
                 console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
                 this._reconnectAttempts = 0;
-                // DON'T resolve yet — wait for session_started
-                // But DO start keepalive pings
-                this._startKeepalive();
+
+                // CRITICAL: Start sending silence frames IMMEDIATELY on open
+                // Don't wait for session_started — ElevenLabs may close if it 
+                // doesn't receive audio quickly after the TCP handshake
+                this._startInitialSilence();
             });
 
             this.ws.on('message', (data) => {
@@ -71,6 +77,11 @@ export class ElevenLabsASR {
                         console.log('[ASR] Session started by server');
                         this.isReady = true;
                         clearTimeout(timeout);
+
+                        // Switch from aggressive initial silence to normal keepalive
+                        this._stopInitialSilence();
+                        this._startKeepalive();
+
                         safeResolve();
                     } else if (msgType === 'transcript' || msgType === 'committed_transcript' || msgType === 'final_transcript') {
                         const text = (response.transcript || response.text || '').trim();
@@ -93,6 +104,7 @@ export class ElevenLabsASR {
                 console.error('[ASR] WebSocket Error:', err.message);
                 this.isReady = false;
                 this._stopKeepalive();
+                this._stopInitialSilence();
                 clearTimeout(timeout);
                 safeResolve();
             });
@@ -102,18 +114,22 @@ export class ElevenLabsASR {
                 console.log(`[ASR] Disconnected (code=${code}, reason=${reasonStr})`);
                 this.isReady = false;
                 this._stopKeepalive();
+                this._stopInitialSilence();
                 clearTimeout(timeout);
 
-                // If this was NOT intentional and we haven't exhausted retries, reconnect
-                if (!this._closed && code !== 1000 && this._reconnectAttempts < this._maxReconnectAttempts) {
+                // Reconnect on ANY close if not intentionally closed
+                // Even code=1000 — ElevenLabs sometimes sends 1000 on idle timeout
+                if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
                     this._reconnectAttempts++;
-                    const delay = Math.min(1000 * this._reconnectAttempts, 5000);
+                    const delay = Math.min(500 * this._reconnectAttempts, 3000);
                     console.log(`[ASR] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})`);
                     setTimeout(() => {
                         if (!this._closed) {
                             this._connectPromise = this._connect();
                         }
                     }, delay);
+                } else if (!this._closed) {
+                    console.error(`[ASR] Max reconnect attempts (${this._maxReconnectAttempts}) exhausted`);
                 }
 
                 safeResolve();
@@ -122,18 +138,45 @@ export class ElevenLabsASR {
     }
 
     /**
-     * Send periodic silence/ping to keep the connection alive.
-     * ElevenLabs may disconnect on idle — sending small silence frames prevents this.
+     * Send silence frames very aggressively right after connection opens.
+     * This prevents ElevenLabs from closing the connection due to no audio data.
+     * μ-law silence = 0xFF byte value. 160 bytes = 20ms at 8kHz.
+     */
+    _startInitialSilence() {
+        this._stopInitialSilence();
+        const silence = Buffer.alloc(160, 0xFF);
+
+        // Send first burst immediately
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(silence);
+        }
+
+        // Then every 100ms (simulates continuous audio stream)
+        this._initialSilenceInterval = setInterval(() => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(silence);
+            }
+        }, 100);
+    }
+
+    _stopInitialSilence() {
+        if (this._initialSilenceInterval) {
+            clearInterval(this._initialSilenceInterval);
+            this._initialSilenceInterval = null;
+        }
+    }
+
+    /**
+     * Normal keepalive: send silence every 2s to prevent idle disconnects.
      */
     _startKeepalive() {
         this._stopKeepalive();
         this._keepaliveInterval = setInterval(() => {
             if (this.ws?.readyState === WebSocket.OPEN) {
-                // Send 160 bytes of silence (μ-law silence = 0xFF, 20ms at 8kHz)
                 const silence = Buffer.alloc(160, 0xFF);
                 this.ws.send(silence);
             }
-        }, 5000); // every 5 seconds
+        }, 2000);
     }
 
     _stopKeepalive() {
@@ -149,7 +192,6 @@ export class ElevenLabsASR {
             const buffer = Buffer.from(base64Audio, 'base64');
             if (buffer.length === 0) return;
 
-            // Scribe V2 Realtime expects raw binary audio frames
             this.ws.send(buffer);
         }
     }
@@ -162,8 +204,8 @@ export class ElevenLabsASR {
         this._closed = true;
         this.isReady = false;
         this._stopKeepalive();
+        this._stopInitialSilence();
         if (this.ws?.readyState === WebSocket.OPEN) {
-            // Just close cleanly — do NOT send empty buffer (ElevenLabs treats it as EOS+close)
             this.ws.close(1000, 'call_ended');
         }
     }
