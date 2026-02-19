@@ -129,7 +129,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v11-TwiML-Pause-Stabilized]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v12-Binary-Stability-Fix]`);
 });
