@@ -9,6 +9,7 @@ export class ElevenLabsASR {
         this.onTranscript = onTranscript;
         this.ws = null;
         this.isReady = false;
+        this._heartbeatInterval = null;
         this._connectPromise = this._connect();
     }
 
@@ -16,20 +17,14 @@ export class ElevenLabsASR {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            /**
-             * Based on ElevenLabs Scribe V2 Realtime documentation:
-             * 1. Configuration is passed via query parameters.
-             * 2. Authentication is via 'xi-api-key' header.
-             * 3. No explicit "config" JSON message is sent if params are in the URL.
-             * 4. Audio chunks use 'audio_base_64' field.
-             */
+            // Adding inactivity_timeout and ensuring the model is scribe_v2_realtime
             const params = new URLSearchParams({
                 model_id: 'scribe_v2_realtime',
-                audio_format: 'ulaw_8000'
+                audio_format: 'ulaw_8000',
+                inactivity_timeout: '180'
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
-            console.log(`[ASR] Connecting to: ${url}`);
             this.ws = new WebSocket(url, {
                 headers: {
                     'xi-api-key': apiKey
@@ -37,17 +32,15 @@ export class ElevenLabsASR {
             });
 
             this.ws.on('open', () => {
-                console.log('[ASR] WebSocket open, ready to stream...');
+                console.log('[ASR] Connected to ElevenLabs Scribe V2 Realtime');
                 this.isReady = true;
+                this._startHeartbeat();
                 resolve();
             });
 
             this.ws.on('message', (data) => {
                 try {
                     const response = JSON.parse(data);
-                    // Log all messages to see the protocol flow (session_begin, etc.)
-                    // console.log('[ASR] Message:', JSON.stringify(response));
-
                     const msgType = response.message_type || response.type;
 
                     if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
@@ -64,28 +57,46 @@ export class ElevenLabsASR {
                     } else if (msgType === 'session_begin') {
                         console.log('[ASR] Session started by server');
                     }
-                } catch (err) {
-                    // Ignore non-JSON messages if any
-                }
+                } catch (err) { }
             });
 
             this.ws.on('error', (err) => {
                 console.error('[ASR] WebSocket Error:', err.message);
                 this.isReady = false;
+                this._stopHeartbeat();
                 resolve();
             });
 
             this.ws.on('close', (code, reason) => {
                 console.log(`[ASR] Disconnected (code=${code}, reason=${reason})`);
                 this.isReady = false;
+                this._stopHeartbeat();
                 resolve();
             });
         });
     }
 
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        this._heartbeatInterval = setInterval(() => {
+            if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
+                // Keep-alive heartbeat for ASR
+                // Using an empty ping-like message if supported, 
+                // but since ASR is input-driven, we just ensure the socket doesn't idle.
+                this.ws.ping();
+            }
+        }, 15000);
+    }
+
+    _stopHeartbeat() {
+        if (this._heartbeatInterval) {
+            clearInterval(this._heartbeatInterval);
+            this._heartbeatInterval = null;
+        }
+    }
+
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
-            // Field name must be 'audio_base_64' for Scribe V2 Realtime
             this.ws.send(JSON.stringify({
                 message_type: 'input_audio_chunk',
                 audio_base_64: base64Audio
@@ -99,6 +110,7 @@ export class ElevenLabsASR {
 
     close() {
         this.isReady = false;
+        this._stopHeartbeat();
         if (this.ws?.readyState === WebSocket.OPEN) {
             try { this.ws.send(JSON.stringify({ message_type: 'eos' })); } catch { }
             this.ws.close();

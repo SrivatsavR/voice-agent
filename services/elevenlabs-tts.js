@@ -10,6 +10,7 @@ export class ElevenLabsTTS {
         this.streamSid = streamSid;
         this.ws = null;
         this.isReady = false;
+        this._heartbeatInterval = null;
         this._connectPromise = this._connect();
     }
 
@@ -17,8 +18,8 @@ export class ElevenLabsTTS {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Reverting to official headers-based auth as query param auth is not supported for TTS.
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}`;
+            // Increased inactivity_timeout to 180s (max) to prevent 'input_timeout_exceeded'
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180`;
 
             this.ws = new WebSocket(url, {
                 headers: {
@@ -30,7 +31,6 @@ export class ElevenLabsTTS {
                 console.log('[TTS] WebSocket open, sending BOS...');
 
                 // Send Beginning of Stream with voice settings
-                // Using a space to ensure the stream starts without closing.
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 }
@@ -38,6 +38,9 @@ export class ElevenLabsTTS {
 
                 this.isReady = true;
                 console.log('[TTS] Connected to ElevenLabs Flash v2.5');
+
+                // Start heartbeat - send a space every 15s to keep the connection active
+                this._startHeartbeat();
                 resolve();
             });
 
@@ -51,23 +54,41 @@ export class ElevenLabsTTS {
                         console.error('[TTS] Server error:', response.error);
                     }
                 } catch (err) {
-                    // Binary audio chunks are not JSON, but the ws library handles them.
-                    // If we get an error here, it might just be the audio data.
+                    // Binary audio chunks are not JSON
                 }
             });
 
             this.ws.on('error', (err) => {
                 console.error('[TTS] WebSocket Error:', err.message);
                 this.isReady = false;
+                this._stopHeartbeat();
                 resolve();
             });
 
             this.ws.on('close', (code, reason) => {
                 console.log(`[TTS] Disconnected (code=${code}, reason=${reason})`);
                 this.isReady = false;
+                this._stopHeartbeat();
                 resolve();
             });
         });
+    }
+
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        this._heartbeatInterval = setInterval(() => {
+            if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
+                // Sending a space acts as a keep-alive without altering the conversation flow significantly
+                this.ws.send(JSON.stringify({ text: " " }));
+            }
+        }, 15000);
+    }
+
+    _stopHeartbeat() {
+        if (this._heartbeatInterval) {
+            clearInterval(this._heartbeatInterval);
+            this._heartbeatInterval = null;
+        }
     }
 
     async waitReady() {
@@ -86,7 +107,7 @@ export class ElevenLabsTTS {
     }
 
     flush() {
-        // No-op for now to keep connection persistent throughout the call.
+        // No-op - we use try_trigger_generation: true for low latency
     }
 
     _sendToTwilio(audioBase64) {
@@ -101,11 +122,9 @@ export class ElevenLabsTTS {
 
     close() {
         this.isReady = false;
+        this._stopHeartbeat();
         if (this.ws?.readyState === WebSocket.OPEN) {
-            try {
-                // Send final EOS signal before closing
-                this.ws.send(JSON.stringify({ text: "" }));
-            } catch { }
+            try { this.ws.send(JSON.stringify({ text: "" })); } catch { }
             this.ws.close();
         }
     }
