@@ -156,5 +156,5 @@ console.log(`  - ElevenLabs Key: ${process.env.ELEVENLABS_API_KEY ? 'Present (st
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT}`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Built: 2026-02-19T20:50:00Z]`);
 });
