@@ -7,11 +7,12 @@ import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 
 const app = express();
+app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ noServer: true });
 
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
@@ -21,14 +22,22 @@ app.get('/', (req, res) => {
 });
 
 app.post('/incoming', (req, res) => {
-  console.log('[Twilio] Incoming call from:', req.body.From || 'unknown');
+  const caller = req.body.From || 'unknown';
+  console.log(`[Twilio] Incoming call from: ${caller}`);
 
-  const host = req.headers.host;
+  // Log all relevant headers to see what Railway's proxy is providing
+  console.log(`[Twilio] Headers: host=${req.headers.host}, x-forwarded-host=${req.headers['x-forwarded-host']}, hostname=${req.hostname}`);
+
+  // Use req.hostname to avoid any internal port issues from req.headers.host
+  const host = req.hostname;
+  const streamUrl = `wss://${host}/media-stream`;
+  console.log(`[Twilio] Returning Stream URL: ${streamUrl}`);
+
   const twimlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Connect>
-        <Stream url="wss://${host}/media-stream">
-            <Parameter name="caller_phone" value="${req.body.From || ''}" />
+        <Stream url="${streamUrl}">
+            <Parameter name="caller_phone" value="${caller}" />
         </Stream>
     </Connect>
 </Response>`;
@@ -37,10 +46,26 @@ app.post('/incoming', (req, res) => {
   res.send(twimlResponse);
 });
 
+// ─── WebSocket Upgrade Handling ──────────────────────────────────────────────
+
+server.on('upgrade', (request, socket, head) => {
+  const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+  console.log(`[HTTP] Upgrade request for ${pathname} from ${request.headers.host}`);
+
+  if (pathname === '/media-stream') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else {
+    console.log(`[HTTP] Rejecting upgrade for ${pathname}`);
+    socket.destroy();
+  }
+});
+
 // ─── WebSocket (Media Stream) ─────────────────────────────────────────────────
 
 wss.on('connection', (ws) => {
-  console.log('[WS] New Twilio connection');
+  console.log('[WS] New Twilio connection established');
 
   let asr = null;
   let tts = null;
