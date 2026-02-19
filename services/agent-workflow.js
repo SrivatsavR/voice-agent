@@ -38,7 +38,7 @@ const welcomeAgent = new Agent({
 Speak the exact welcome line only. Do not ask any questions.
 Say verbatim: "Hello, thank you for calling Meesho. This is the reseller onboarding team."
 Set next_node to "NODE_1_NAME_INTEREST". Leave updates empty.`,
-    model: "gpt-4.1",
+    model: "gpt-4o",
     outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.2, topP: 1, maxTokens: 256, store: true }
 });
@@ -76,7 +76,7 @@ UNCLEAR / NO ANSWER: ask ONE clarifying question → next_node: NODE_1_NAME_INTE
 If caller refuses to share name → set name_spoken to "no_name", still ask interest.
 
 Return ONLY the JSON output.`,
-    model: "gpt-4.1",
+    model: "gpt-4o",
     outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 512, store: true }
 });
@@ -120,7 +120,7 @@ Only advance to the next question once the current answer is valid. If a field i
 - switch_speed_bucket: string (if not convertible to days)
 
 Return ONLY the JSON output.`,
-    model: "gpt-4.1",
+    model: "gpt-4o",
     outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 768, store: true }
 });
@@ -166,7 +166,7 @@ Q2 — If GSTIN not yet collected or valid (and not skipped): "Could you share y
 - gst_attempts: number (increment on failure)
 
 Return ONLY the JSON output.`,
-    model: "gpt-4.1",
+    model: "gpt-4o",
     outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true }
 });
@@ -207,7 +207,7 @@ Then ask: "Is all of that correct?"
 - call_outcome: "qualified" | "incomplete"
 
 Return ONLY the JSON output.`,
-    model: "gpt-4.1",
+    model: "gpt-4o",
     outputType: NodeOutputSchema,
     modelSettings: { temperature: 0.5, topP: 1, maxTokens: 768, store: true }
 });
