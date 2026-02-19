@@ -9,18 +9,27 @@ export class ElevenLabsASR {
         this.onTranscript = onTranscript;
         this.ws = null;
         this.isReady = false;
-        this._configResolved = false;
-        this._connectRootPromise = null;
-        this._sessionBeginPromise = this._connect();
+        this._connectPromise = this._connect();
     }
 
     _connect() {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Standard ASR realtime endpoint
-            const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime`;
+            /**
+             * Based on ElevenLabs Scribe V2 Realtime documentation:
+             * 1. Configuration is passed via query parameters.
+             * 2. Authentication is via 'xi-api-key' header.
+             * 3. No explicit "config" JSON message is sent if params are in the URL.
+             * 4. Audio chunks use 'audio_base_64' field.
+             */
+            const params = new URLSearchParams({
+                model_id: 'scribe_v2_realtime',
+                audio_format: 'ulaw_8000'
+            });
+            const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
+            console.log(`[ASR] Connecting to: ${url}`);
             this.ws = new WebSocket(url, {
                 headers: {
                     'xi-api-key': apiKey
@@ -28,35 +37,20 @@ export class ElevenLabsASR {
             });
 
             this.ws.on('open', () => {
-                console.log('[ASR] WebSocket open, sending handshake JSON...');
-
-                // Config message structure for Scribe V2 Realtime
-                const config = {
-                    message_type: 'config',
-                    model_id: 'scribe_v2_realtime',
-                    audio_format: 'ulaw_8000',
-                    language_code: 'en',
-                    commit_strategy: 'auto',
-                    enable_logging: true
-                };
-
-                this.ws.send(JSON.stringify(config));
-                // We do NOT resolve here. We wait for session_begin or error.
+                console.log('[ASR] WebSocket open, ready to stream...');
+                this.isReady = true;
+                resolve();
             });
 
             this.ws.on('message', (data) => {
                 try {
                     const response = JSON.parse(data);
+                    // Log all messages to see the protocol flow (session_begin, etc.)
+                    // console.log('[ASR] Message:', JSON.stringify(response));
+
                     const msgType = response.message_type || response.type;
 
-                    if (msgType === 'session_begin') {
-                        console.log('[ASR] Session established (session_begin)');
-                        this.isReady = true;
-                        if (!this._configResolved) {
-                            this._configResolved = true;
-                            resolve();
-                        }
-                    } else if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
+                    if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
                         const text = (response.text || response.data?.text || '').trim();
                         if (text && this.onTranscript) {
                             console.log(`[ASR] FINAL: ${text}`);
@@ -67,40 +61,31 @@ export class ElevenLabsASR {
                         if (text) console.log(`[ASR] partial: ${text}`);
                     } else if (msgType === 'input_error' || msgType === 'error') {
                         console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
-                        // If we get an error during handshake, resolve anyway so call doesn't hang, 
-                        // but isReady will be false.
-                        if (!this._configResolved) {
-                            this._configResolved = true;
-                            resolve();
-                        }
+                    } else if (msgType === 'session_begin') {
+                        console.log('[ASR] Session started by server');
                     }
                 } catch (err) {
-                    console.error('[ASR] Failed to parse message:', err.message);
+                    // Ignore non-JSON messages if any
                 }
             });
 
             this.ws.on('error', (err) => {
                 console.error('[ASR] WebSocket Error:', err.message);
                 this.isReady = false;
-                if (!this._configResolved) {
-                    this._configResolved = true;
-                    resolve();
-                }
+                resolve();
             });
 
             this.ws.on('close', (code, reason) => {
                 console.log(`[ASR] Disconnected (code=${code}, reason=${reason})`);
                 this.isReady = false;
-                if (!this._configResolved) {
-                    this._configResolved = true;
-                    resolve();
-                }
+                resolve();
             });
         });
     }
 
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
+            // Field name must be 'audio_base_64' for Scribe V2 Realtime
             this.ws.send(JSON.stringify({
                 message_type: 'input_audio_chunk',
                 audio_base_64: base64Audio
@@ -109,7 +94,7 @@ export class ElevenLabsASR {
     }
 
     async waitReady() {
-        await this._sessionBeginPromise;
+        await this._connectPromise;
     }
 
     close() {

@@ -189,5 +189,5 @@ if (elKey.startsWith('sk_') || elKey.startsWith('sk-')) {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Path: Fixed-ASR-Protocol-v3]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Path: Fixed-ASR-Protocol-v4]`);
 });
