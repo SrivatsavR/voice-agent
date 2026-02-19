@@ -2,7 +2,6 @@ import 'dotenv/config';
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'http';
-import bodyParser from 'body-parser';
 import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
@@ -17,6 +16,7 @@ const wss = new WebSocketServer({ server });
 // ─── Twilio Webhook ───────────────────────────────────────────────────────────
 
 app.get('/', (req, res) => {
+  console.log('[Health] Root hit');
   res.send('Voice AI Platform is running!');
 });
 
@@ -98,7 +98,6 @@ wss.on('connection', (ws) => {
         console.log(`[Welcome] ${welcomeText}`);
         if (tts && welcomeText) {
           tts.sendText(welcomeText);
-          tts.flush();
         }
 
         break;
@@ -137,6 +136,6 @@ wss.on('connection', (ws) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`[Server] Running on port ${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[Server] Listening on 0.0.0.0:${PORT}`);
 });
