@@ -85,7 +85,7 @@ wss.on('connection', (ws) => {
           if (say && tts && isActive) {
             console.log(`[Agent] ${say}`);
             tts.sendText(say);
-            tts.flush(); // Ensure everything is generated promptly
+            setTimeout(() => { if (isActive) tts.flush(); }, 100);
           }
 
           if (callSession.isTerminal()) {
@@ -106,9 +106,9 @@ wss.on('connection', (ws) => {
         const welcome = await callSession.getWelcome();
         console.log(`[Welcome] ${welcome}`);
         if (tts && isActive) {
-          ignoreAsrUntil = Date.now() + 5000;
+          ignoreAsrUntil = Date.now() + 6000;
           tts.sendText(welcome);
-          tts.flush(); // FLUSH THE WELCOME
+          setTimeout(() => { if (isActive) tts.flush(); }, 100);
         }
       } catch (err) { console.error('[Welcome Error]', err); }
     }
@@ -131,5 +131,5 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v12-Binary-Stability-Fix]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: v13-ASR-Model-Fix]`);
 });

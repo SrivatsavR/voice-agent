@@ -17,7 +17,7 @@ export class ElevenLabsASR {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
             const params = new URLSearchParams({
-                model_id: 'scribe_v2',
+                model_id: 'scribe_v2_realtime',
                 audio_format: 'ulaw_8000'
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
