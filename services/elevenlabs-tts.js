@@ -32,11 +32,11 @@ export class ElevenLabsTTS {
                 this.isReady = true;
                 console.log('[TTS] Connected');
 
-                // IMPORTANT: Send a Beginning-of-Stream with voice settings to ensure stability
+                // Reduced chunk_length_schedule for lower latency
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                    generation_config: { chunk_length_schedule: [50] }
+                    generation_config: { chunk_length_schedule: [10] }
                 }));
 
                 this._startHeartbeat();
@@ -45,20 +45,24 @@ export class ElevenLabsTTS {
 
             this.ws.on('message', (data) => {
                 try {
-                    // ElevenLabs sends audio as base64 strings in JSON.
-                    // We must convert Buffer or ArrayBuffer to string before parsing.
-                    const text = data.toString();
-                    if (!text.startsWith('{')) return; // Skip binary pings/frames to avoid static noise
-
-                    const response = JSON.parse(text);
-                    if (response.audio) {
-                        this._sendToTwilio(response.audio);
-                    }
-                    if (response.error) {
-                        console.error('[TTS] Server error:', response.error);
+                    // ElevenLabs can send audio as raw binary OR as JSON with base64 'audio' field
+                    if (Buffer.isBuffer(data)) {
+                        // Check if it's JSON hidden in a Buffer
+                        const text = data.toString();
+                        if (text.startsWith('{')) {
+                            const response = JSON.parse(text);
+                            if (response.audio) this._sendToTwilio(response.audio);
+                            if (response.error) console.error('[TTS] Server error:', response.error);
+                        } else {
+                            // Raw binary audio frame
+                            this._sendToTwilio(data.toString('base64'));
+                        }
+                    } else if (typeof data === 'string' && data.startsWith('{')) {
+                        const response = JSON.parse(data);
+                        if (response.audio) this._sendToTwilio(response.audio);
                     }
                 } catch (err) {
-                    // Ignore parsing errors for pings/binary data
+                    // console.error('[TTS Message Error]', err);
                 }
             });
 
@@ -80,7 +84,6 @@ export class ElevenLabsTTS {
 
     _startHeartbeat() {
         this._stopHeartbeat();
-        // Send a space character every 15s to prevent the 20s inactivity disconnect
         this._heartbeatInterval = setInterval(() => {
             if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ text: " " }));
@@ -105,6 +108,15 @@ export class ElevenLabsTTS {
                 text: text + " ",
                 try_trigger_generation: true
             }));
+        }
+    }
+
+    /**
+     * Signal End of Stream to flush the remaining buffer
+     */
+    flush() {
+        if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ text: "" }));
         }
     }
 

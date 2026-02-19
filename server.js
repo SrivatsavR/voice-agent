@@ -79,16 +79,19 @@ wss.on('connection', (ws) => {
           if (Date.now() < ignoreAsrUntil) return; // Mute agent's propia voice (echo)
 
           console.log(`[User] ${transcript}`);
-          const { say, next_node, session } = await callSession.processTranscript(transcript);
+          const result = await callSession.processTranscript(transcript);
+          const { say, next_node, session } = result;
 
           if (say && tts && isActive) {
+            console.log(`[Agent] ${say}`);
             tts.sendText(say);
+            tts.flush(); // Ensure everything is generated promptly
           }
 
           if (callSession.isTerminal()) {
             isActive = false;
-            console.log(`[Terminal] Hanging up in 7s... outcome=${session.call_outcome}`);
-            setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 7000);
+            console.log(`[Terminal] outcome=${session.call_outcome}`);
+            setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 5000);
           }
         } catch (err) { console.error('[ASR Callback Error]', err); }
       });
@@ -97,15 +100,15 @@ wss.on('connection', (ws) => {
 
       try {
         // Wait for service handshakes
-        const initTimeout = new Promise((_, reject) => setTimeout(() => reject('Timeout'), 4000));
-        await Promise.race([Promise.all([tts.waitReady(), asr.waitReady()]), initTimeout])
-          .catch(() => console.warn('[WS] Services slow, continuing...'));
+        await Promise.all([tts.waitReady(), asr.waitReady()]);
+        console.log('[WS] Services ready');
 
         const welcome = await callSession.getWelcome();
         console.log(`[Welcome] ${welcome}`);
         if (tts && isActive) {
-          ignoreAsrUntil = Date.now() + 6000;
+          ignoreAsrUntil = Date.now() + 5000;
           tts.sendText(welcome);
+          tts.flush(); // FLUSH THE WELCOME
         }
       } catch (err) { console.error('[Welcome Error]', err); }
     }

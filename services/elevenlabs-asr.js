@@ -45,24 +45,22 @@ export class ElevenLabsASR {
             this.ws.on('message', (data) => {
                 try {
                     const response = JSON.parse(data);
-                    const msgType = response.message_type || response.type;
+                    const msgType = response.type || response.message_type;
 
-                    if (msgType === 'transcript' || msgType === 'final_transcript' || msgType === 'committed_transcript_with_timestamps') {
-                        // Check both 'text' and 'transcript' fields to be safe.
-                        const text = (response.text || response.transcript || response.data?.text || '').trim();
+                    if (msgType === 'transcript' || msgType === 'committed_transcript' || msgType === 'final_transcript') {
+                        // For Scribe V2 Realtime, 'transcript' contains the text.
+                        const text = (response.transcript || response.text || '').trim();
                         if (text && this.onTranscript) {
-                            console.log(`[ASR] FINAL: ${text}`);
+                            console.log(`[ASR] ${msgType.toUpperCase()}: ${text}`);
                             this.onTranscript(text);
                         }
                     } else if (msgType === 'partial_transcript') {
-                        const text = (response.text || response.transcript || '').trim();
+                        const text = (response.transcript || response.text || '').trim();
                         if (text) console.log(`[ASR] partial: ${text}`);
-                    } else if (msgType === 'input_error' || msgType === 'error') {
-                        console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
-                    } else if (msgType === 'session_begin' || msgType === 'session_started') {
-                        console.log(`[ASR] Session started by server (${msgType})`);
-                    } else {
-                        // console.log(`[ASR] Message received: ${msgType}`);
+                    } else if (msgType === 'error') {
+                        console.error('[ASR] Server error:', response.error || response.message);
+                    } else if (msgType === 'session_started') {
+                        console.log(`[ASR] Session started by server`);
                     }
                 } catch (err) {
                     // Ignore binary or non-JSON
@@ -85,13 +83,9 @@ export class ElevenLabsASR {
 
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
-            // Sending both audio_base_64 and audio for maximal compatibility.
-            // Scribe V2 Realtime uses 'audio_base_64', but some legacy variants use 'audio'.
-            this.ws.send(JSON.stringify({
-                message_type: 'input_audio_chunk',
-                audio_base_64: base64Audio,
-                audio: base64Audio
-            }));
+            // Scribe V2 Realtime expects raw binary audio frames
+            const buffer = Buffer.from(base64Audio, 'base64');
+            this.ws.send(buffer);
         }
     }
 
@@ -103,11 +97,8 @@ export class ElevenLabsASR {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
             try {
-                // Using an empty audio chunk as EOS instead of message_type: 'eos'
-                this.ws.send(JSON.stringify({
-                    message_type: 'input_audio_chunk',
-                    audio_base_64: ""
-                }));
+                // Send an empty binary frame to signal EOS if needed
+                this.ws.send(Buffer.alloc(0));
             } catch { }
             this.ws.close();
         }
