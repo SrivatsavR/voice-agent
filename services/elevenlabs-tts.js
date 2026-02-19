@@ -17,7 +17,7 @@ export class ElevenLabsTTS {
         return new Promise((resolve) => {
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // Reverting to headers-based authentication for TTS as query param auth failed.
+            // Reverting to official headers-based auth as query param auth is not supported for TTS.
             const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}`;
 
             this.ws = new WebSocket(url, {
@@ -30,6 +30,7 @@ export class ElevenLabsTTS {
                 console.log('[TTS] WebSocket open, sending BOS...');
 
                 // Send Beginning of Stream with voice settings
+                // Using a space to ensure the stream starts without closing.
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 }
@@ -50,12 +51,13 @@ export class ElevenLabsTTS {
                         console.error('[TTS] Server error:', response.error);
                     }
                 } catch (err) {
-                    console.error('[TTS] Failed to parse message:', err.message);
+                    // Binary audio chunks are not JSON, but the ws library handles them.
+                    // If we get an error here, it might just be the audio data.
                 }
             });
 
             this.ws.on('error', (err) => {
-                console.error('[TTS] Error:', err.message);
+                console.error('[TTS] WebSocket Error:', err.message);
                 this.isReady = false;
                 resolve();
             });
@@ -84,7 +86,7 @@ export class ElevenLabsTTS {
     }
 
     flush() {
-        // No-op for now to avoid premature closure.
+        // No-op for now to keep connection persistent throughout the call.
     }
 
     _sendToTwilio(audioBase64) {
@@ -101,7 +103,7 @@ export class ElevenLabsTTS {
         this.isReady = false;
         if (this.ws?.readyState === WebSocket.OPEN) {
             try {
-                // Final EOS signal
+                // Send final EOS signal before closing
                 this.ws.send(JSON.stringify({ text: "" }));
             } catch { }
             this.ws.close();

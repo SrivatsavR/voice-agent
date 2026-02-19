@@ -176,10 +176,18 @@ wss.on('connection', (ws) => {
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 console.log('[Server] Checking API Keys...');
-console.log(`  - OpenAI Key: ${process.env.OPENAI_API_KEY ? 'Present (startsWith ' + process.env.OPENAI_API_KEY.substring(0, 3) + ')' : 'MISSING'}`);
-console.log(`  - ElevenLabs Key: ${process.env.ELEVENLABS_API_KEY ? 'Present (startsWith ' + process.env.ELEVENLABS_API_KEY.substring(0, 3) + ')' : 'MISSING'}`);
+const openAiKey = process.env.OPENAI_API_KEY || '';
+const elKey = process.env.ELEVENLABS_API_KEY || '';
+
+console.log(`  - OpenAI Key: ${openAiKey ? 'Present (startsWith ' + openAiKey.substring(0, 3) + ')' : 'MISSING'}`);
+console.log(`  - ElevenLabs Key: ${elKey ? 'Present (startsWith ' + elKey.substring(0, 3) + ')' : 'MISSING'}`);
+
+if (elKey.startsWith('sk_') || elKey.startsWith('sk-')) {
+  console.warn('  ⚠️ WARNING: ELEVENLABS_API_KEY starts with \"sk_\". This usually looks like an OpenAI key.');
+  console.warn('  If your ElevenLabs API is failing with 401/403, please check your environment variables.');
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Built: 2026-02-19T20:50:00Z]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Path: Fixed-ASR-Protocol-v3]`);
 });
