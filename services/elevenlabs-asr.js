@@ -83,8 +83,11 @@ export class ElevenLabsASR {
 
     sendAudio(base64Audio) {
         if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
-            // Scribe V2 Realtime expects raw binary audio frames
+            if (!base64Audio) return;
             const buffer = Buffer.from(base64Audio, 'base64');
+            if (buffer.length === 0) return;
+
+            // Scribe V2 Realtime expects raw binary audio frames
             this.ws.send(buffer);
         }
     }

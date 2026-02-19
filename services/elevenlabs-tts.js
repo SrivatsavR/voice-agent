@@ -112,11 +112,14 @@ export class ElevenLabsTTS {
     }
 
     /**
-     * Signal End of Stream to flush the remaining buffer
+     * Trigger generation for the current buffer without closing the connection
      */
     flush() {
         if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({ text: "" }));
+            this.ws.send(JSON.stringify({
+                text: " ",
+                try_trigger_generation: true
+            }));
         }
     }
 
