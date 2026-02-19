@@ -70,6 +70,7 @@ wss.on('connection', (ws) => {
   let asr = null;
   let tts = null;
   let callSession = null;
+  let isActive = true;
 
   ws.on('message', async (message) => {
     let msg;
@@ -88,70 +89,66 @@ wss.on('connection', (ws) => {
         // Initialize TTS and ASR — start connections in parallel
         tts = new ElevenLabsTTS(ws, streamSid);
         asr = new ElevenLabsASR(async (transcript) => {
-          if (!transcript?.trim()) return;
-          console.log(`[User] ${transcript}`);
+          try {
+            if (!transcript?.trim() || !isActive) return;
+            console.log(`[ASR] Transcript: "${transcript}"`);
 
-          const prevNode = callSession.getCurrentNode();
-          const { say, next_node, notes, session } = await callSession.processTranscript(transcript);
-          console.log(`[Agent] ${prevNode} → ${next_node} | ${say}`);
-          if (notes) console.log(`  ↳ notes: ${notes}`);
+            if (!callSession) {
+              console.warn('[ASR] Received transcript before session fully initialized.');
+              return;
+            }
 
-          // Speak the agent's response
-          if (say && tts) {
-            tts.sendText(say);
-          }
+            const prevNode = callSession.getCurrentNode();
+            const { say, next_node, session } = await callSession.processTranscript(transcript);
+            console.log(`[Workflow] ${prevNode} → ${next_node} | Say: ${say}`);
 
-          // Handle terminal nodes — log session and hang up after TTS drains
-          if (callSession.isTerminal()) {
-            console.log(`\n[Call ended] outcome=${session.call_outcome} | node=${next_node}`);
-            console.log('[Final Session]', JSON.stringify(session, null, 2));
-            setTimeout(() => ws.close(), 4000);
+            if (say && tts && isActive) {
+              tts.sendText(say);
+            }
+
+            if (callSession.isTerminal()) {
+              isActive = false;
+              console.log(`[Terminal] outcome=${session.call_outcome} | node=${next_node}`);
+              setTimeout(() => {
+                console.log('[WS] Closing due to terminal state');
+                if (ws.readyState === ws.OPEN) ws.close();
+              }, 7000);
+            }
+          } catch (err) {
+            console.error('[ASR Callback Error]', err);
           }
         });
 
         // Initialize the agent session
         callSession = createCallSession(callerPhone);
 
-        // Wait for TTS + ASR connections AND the welcome text in parallel
-        // Added a 5s timeout to prevent the call from hanging indefinitely if a service is slow.
-        const initTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Service initialization timed out')), 5000)
-        );
+        // Wait for services
+        const welcomeText = "Hello, thank you for calling Meesho. This is the reseller onboarding team.";
 
         try {
-          const [welcomeText] = await Promise.race([
-            Promise.all([
-              callSession.getWelcome(),
-              tts.waitReady(),
-              asr.waitReady()
-            ]),
+          const initTimeout = new Promise((_, reject) => setTimeout(() => reject('Timeout'), 5000));
+          await Promise.race([
+            Promise.all([tts.waitReady(), asr.waitReady()]),
             initTimeout
-          ]);
+          ]).catch(e => console.warn('[WS] Service init slow/failed, proceeding anyway...'));
 
-          // Now TTS is guaranteed ready — speak the welcome
           console.log(`[Welcome] ${welcomeText}`);
-          if (tts && welcomeText) {
-            tts.sendText(welcomeText);
-          }
+          if (tts && isActive) tts.sendText(welcomeText);
         } catch (err) {
-          console.error(`[WS] Initialization failed: ${err.message}`);
-          // Still try to send welcome if callSession got it, but it might fail if TTS isn't ready
-          const welcome = await callSession.getWelcome().catch(() => 'Hello, thank you for calling.');
-          if (tts) tts.sendText(welcome);
+          console.error('[Welcome Error]', err);
         }
 
         break;
       }
 
       case 'media': {
-        // Forward raw mulaw audio from Twilio to ElevenLabs ASR
-        asr?.sendAudio(msg.media.payload);
+        if (isActive) asr?.sendAudio(msg.media.payload);
         break;
       }
 
       case 'stop': {
-        console.log('[WS] Stream stopped');
-        asr?.close();
+        console.log('[WS] Stream stopped by Twilio');
+        isActive = false;
         break;
       }
     }
@@ -159,12 +156,11 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     console.log('[WS] Connection closed');
+    isActive = false;
     asr?.close();
     tts?.close();
-
     if (callSession) {
-      const session = callSession.getSession();
-      console.log('[Final Session]', JSON.stringify(session, null, 2));
+      console.log('[Final Session State]', JSON.stringify(callSession.getSession(), null, 2));
     }
   });
 
@@ -175,19 +171,21 @@ wss.on('connection', (ws) => {
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-console.log('[Server] Checking API Keys...');
+console.log('[Server] Startup Diagnostic:');
 const openAiKey = process.env.OPENAI_API_KEY || '';
 const elKey = process.env.ELEVENLABS_API_KEY || '';
-
-console.log(`  - OpenAI Key: ${openAiKey ? 'Present (startsWith ' + openAiKey.substring(0, 3) + ')' : 'MISSING'}`);
-console.log(`  - ElevenLabs Key: ${elKey ? 'Present (startsWith ' + elKey.substring(0, 3) + ')' : 'MISSING'}`);
-
-if (elKey.startsWith('sk_') || elKey.startsWith('sk-')) {
-  console.warn('  ⚠️ WARNING: ELEVENLABS_API_KEY starts with \"sk_\". This usually looks like an OpenAI key.');
-  console.warn('  If your ElevenLabs API is failing with 401/403, please check your environment variables.');
-}
+console.log(`  - OpenAI Key: ${openAiKey ? 'Present (' + openAiKey.substring(0, 7) + '...)' : 'MISSING'}`);
+console.log(`  - ElevenLabs Key: ${elKey ? 'Present (' + elKey.substring(0, 7) + '...)' : 'MISSING'}`);
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Path: Fixed-ASR-Protocol-v6]`);
+  console.log(`[Server] Listening on 0.0.0.0:${PORT} [Build Tag: Fixed-ASR-Protocol-v7-Final]`);
+});
+
+// Global Error Handling
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Fatal] Uncaught Exception:', err);
 });

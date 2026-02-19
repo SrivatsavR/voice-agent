@@ -30,7 +30,7 @@ export class ElevenLabsTTS {
             this.ws.on('open', () => {
                 console.log('[TTS] WebSocket open, sending BOS...');
 
-                // Send Beginning of Stream with voice settings
+                // Send Beginning of Stream with a space to warm up
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 }
@@ -39,13 +39,18 @@ export class ElevenLabsTTS {
                 this.isReady = true;
                 console.log('[TTS] Connected to ElevenLabs Flash v2.5');
 
-                // Start heartbeat - send a space every 15s to keep the connection active
                 this._startHeartbeat();
                 resolve();
             });
 
             this.ws.on('message', (data) => {
                 try {
+                    // Handle binary audio chunks (Buffer or ArrayBuffer)
+                    if (data instanceof Buffer || data instanceof ArrayBuffer || typeof data !== 'string') {
+                        this._sendToTwilio(Buffer.from(data).toString('base64'));
+                        return;
+                    }
+
                     const response = JSON.parse(data);
                     if (response.audio) {
                         this._sendToTwilio(response.audio);
@@ -54,7 +59,7 @@ export class ElevenLabsTTS {
                         console.error('[TTS] Server error:', response.error);
                     }
                 } catch (err) {
-                    // Binary audio chunks are not JSON
+                    // console.warn('[TTS] Failed to parse JSON message, skipping.');
                 }
             });
 
@@ -78,7 +83,7 @@ export class ElevenLabsTTS {
         this._stopHeartbeat();
         this._heartbeatInterval = setInterval(() => {
             if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
-                // Sending a space acts as a keep-alive without altering the conversation flow significantly
+                // Sending a space acts as a keep-alive
                 this.ws.send(JSON.stringify({ text: " " }));
             }
         }, 15000);
@@ -101,13 +106,7 @@ export class ElevenLabsTTS {
                 text,
                 try_trigger_generation: true
             }));
-        } else {
-            console.warn(`[TTS] Cannot send text. ready=${this.isReady}, wsState=${this.ws?.readyState}`);
         }
-    }
-
-    flush() {
-        // No-op - we use try_trigger_generation: true for low latency
     }
 
     _sendToTwilio(audioBase64) {
