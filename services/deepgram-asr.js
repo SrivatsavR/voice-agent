@@ -121,13 +121,10 @@ export class DeepgramASR {
         if (!transcript) return;
 
         const isFinal = msg.is_final;
+        const speechFinal = msg.speech_final;
 
         if (!isFinal) {
             this.options.onInterim?.(transcript); // Still immediately calls TTS clearAudio
-
-            // Wait for 5 seconds of voice inactivity
-            if (this._flushTimeout) clearTimeout(this._flushTimeout);
-            this._flushTimeout = setTimeout(() => this._forceFlush(), 5000);
             return;
         }
 
@@ -136,9 +133,14 @@ export class DeepgramASR {
             ? `${this._utteranceBuffer} ${transcript}`.trim()
             : transcript;
 
-        // Reset 5s voice inactivity timer on final piece
-        if (this._flushTimeout) clearTimeout(this._flushTimeout);
-        this._flushTimeout = setTimeout(() => this._forceFlush(), 5000);
+        if (speechFinal) {
+            // Immediate flush when Deepgram VAD detects end of phrase
+            this._forceFlush();
+        } else {
+            // Fallback: If no speech_final arrives within 800ms, force flush to prevent hanging
+            if (this._flushTimeout) clearTimeout(this._flushTimeout);
+            this._flushTimeout = setTimeout(() => this._forceFlush(), 800);
+        }
     }
 
     _startKeepalive() {
