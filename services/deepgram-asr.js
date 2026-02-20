@@ -1,9 +1,6 @@
 import { WebSocket } from 'ws';
 import { Logger } from '../utils/logger.js';
 
-/**
- * FIXED: DeepgramASR with TypeError fix + faster connection + buffer management
- */
 export class DeepgramASR {
     constructor(onTranscript, options = {}) {
         this.onTranscript = onTranscript;
@@ -11,189 +8,167 @@ export class DeepgramASR {
         this.isReady = false;
         this._closed = false;
         this._reconnectAttempts = 0;
-        this._maxReconnectAttempts = 3;
+        this._maxReconnectAttempts = 5;
         this._keepaliveInterval = null;
         this._utteranceBuffer = '';
-        this._connectPromise = null;  // FIXED: Proper promise tracking
+        this._connectTimeout = null;
 
         this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
-        this._connect();  // Start immediately
+        process.nextTick(() => this._connect());
     }
 
-    async _connect() {
-        if (this._closed) return Promise.resolve();
+    _connect() {
+        if (this._closed || this._reconnectAttempts >= this._maxReconnectAttempts) {
+            return;
+        }
 
         const apiKey = process.env.DEEPGRAM_API_KEY;
         if (!apiKey) {
-            this._log.error('DEEPGRAM_API_KEY not set!');
-            return Promise.resolve();
+            this._log.error('🚫 DEEPGRAM_API_KEY missing');
+            return;
         }
 
         const params = new URLSearchParams({
-            model: process.env.DEEPGRAM_MODEL || 'nova-2',
+            model: 'nova-2',
             encoding: 'mulaw',
             sample_rate: '8000',
             channels: '1',
             punctuate: 'true',
             interim_results: 'true',
             endpointing: '200',
-            utterance_end_ms: '500',
-            vad_events: 'true',
-            language: 'en',
+            utterance_end_ms: '1000',
+            language: 'en'
         });
 
-        const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
-        this._log.info('Connecting to Deepgram', { 
-            attempt: this._reconnectAttempts + 1, 
-            url: url.substring(0, 80) + '...' 
-        });
+        const url = `wss://api.deepgram.com/v1/listen?${params}`;
+        this._log.info('🔄 Deepgram connect', { attempt: this._reconnectAttempts + 1 });
 
-        // FIXED: Safe WebSocket options
         this.ws = new WebSocket(url, [], {
-            timeout: 8000,  // Faster timeout
-            headers: {
-                'Authorization': `Token ${apiKey}`,
-                'User-Agent': 'DeepgramNodeClient/1.0'
-            },
-            perMessageDeflate: false,
-            rejectUnauthorized: process.env.NODE_ENV !== 'production',
-            handshakeTimeout: 5000  // Faster handshake
+            headers: { 'Authorization': `Token ${apiKey}` },
+            timeout: 5000,
+            perMessageDeflate: false
         });
 
-        // FIXED: Return proper promise
-        return new Promise((resolve) => {
-            let resolved = false;
-            const safeResolve = () => { 
-                if (!resolved) { 
-                    resolved = true; 
-                    resolve(); 
-                } 
-            };
+        this._connectTimeout = setTimeout(() => {
+            this._log.warn('⏰ Deepgram timeout');
+            this.ws?.close(1000, 'timeout');
+        }, 6000);
 
-            const timeout = setTimeout(() => {
-                this._log.warn('Deepgram connection timeout (8s)');
-                this.isReady = false;
-                safeResolve();
-            }, 8000);
+        this.ws.on('open', () => {
+            this._log.info('✅ Deepgram READY');
+            this.isReady = true;
+            this._reconnectAttempts = 0;
+            clearTimeout(this._connectTimeout);
+            this._startKeepalive();
+        });
 
-            this.ws.on('open', () => {
-                this._log.info('✅ Deepgram WebSocket connected');
-                this.isReady = true;
-                this._reconnectAttempts = 0;
-                this._startKeepalive();
-                clearTimeout(timeout);
-                safeResolve();
+        this.ws.on('error', (err) => {
+            this._log.error('💥 Deepgram WS error', { message: err.message });
+            this.isReady = false;
+            clearTimeout(this._connectTimeout);
+        });
+
+        this.ws.on('unexpected-response', (req, res) => {
+            this._log.error('🚫 Deepgram handshake failed', { 
+                status: res.statusCode,
+                statusText: res.statusText 
             });
+            this.isReady = false;
+            clearTimeout(this._connectTimeout);
+        });
 
-            // FIXED: Safe headers logging (TypeError fix)
-            this.ws.on('unexpected-response', (request, response) => {
-                const headers = {};
-                if (response.headers) {
-                    try {
-                        // Safe iteration - handle Node.js response.headers properly
-                        Object.keys(response.headers).forEach(key => {
-                            headers[key] = response.headers[key];
-                        });
-                    } catch (e) {
-                        headers['headers_parse_error'] = 'failed';
-                    }
+        this.ws.on('message', (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.type === 'Results') {
+                    this._handleTranscript(msg);
+                } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
+                    this.onTranscript?.(this._utteranceBuffer.trim());
+                    this._utteranceBuffer = '';
                 }
-                
-                this._log.error('❌ Deepgram handshake failed', {
-                    status: response.statusCode,
-                    statusText: response.statusText || 'unknown',
-                    headers: headers
-                });
-                this.isReady = false;
-                safeResolve();
-            });
+            } catch {}
+        });
 
-            this.ws.on('message', (data) => {
-                try {
-                    const text = Buffer.isBuffer(data) ? data.toString() : data.toString();
-                    const response = JSON.parse(text);
-                    const msgType = response.type || 'unknown';
+        this.ws.on('close', (code, reason) => {
+            this._log.debug('🔌 Deepgram closed', { code, reason: reason?.toString() });
+            this.isReady = false;
+            clearTimeout(this._connectTimeout);
+            this._stopKeepalive();
 
-                    switch (msgType) {
-                        case 'Results':
-                            this._handleTranscriptResult(response);
-                            break;
-                        case 'UtteranceEnd':
-                            if (this._utteranceBuffer.trim() && this.onTranscript) {
-                                this.onTranscript(this._utteranceBuffer.trim());
-                                this._utteranceBuffer = '';
-                            }
-                            break;
-                        case 'SpeechStarted':
-                        case 'SpeechEnded':
-                            break; // VAD events
-                        case 'Metadata':
-                            this._log.debug('Metadata', { 
-                                request_id: response.request_id,
-                                model: response.model_info?.name 
-                            });
-                            break;
-                        case 'Error':
-                            this._log.error('Deepgram API error', response);
-                            break;
-                        default:
-                            this._log.trace(`Deepgram: ${msgType}`);
-                    }
-                } catch (err) {
-                    // Binary audio or parse error - ignore
-                }
-            });
-
-            this.ws.on('error', (err) => {
-                this._log.error('Deepgram WebSocket error', err.message);
-                this.isReady = false;
-                this._stopKeepalive();
-                clearTimeout(timeout);
-                safeResolve();
-            });
-
-            this.ws.on('close', (code, reason) => {
-                this._log.info('Deepgram disconnected', { code, reason: reason?.toString() || 'none' });
-                this.isReady = false;
-                this._stopKeepalive();
-                clearTimeout(timeout);
-
-                if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
-                    this._reconnectAttempts++;
-                    const delay = 1000 * this._reconnectAttempts;
-                    setTimeout(() => this._connect(), delay);
-                }
-                safeResolve();
-            });
+            if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
+                this._reconnectAttempts++;
+                setTimeout(() => this._connect(), 1000 * this._reconnectAttempts);
+            }
         });
     }
 
-    _handleTranscriptResult(response) {
-        const channel = response.channel;
-        if (!channel?.alternatives?.length) return;
-
-        const alt = channel.alternatives[0];
-        const transcript = (alt.transcript || '').trim();
+    _handleTranscript(msg) {
+        const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
         if (!transcript) return;
 
-        const isFinal = !!response.is_final;
-        const speechFinal = !!response.speech_final;
+        const isFinal = msg.is_final;
+        const speechFinal = msg.speech_final;
 
-        if (!isFinal) {
-            // Partial - ignore for now
-            return;
-        }
+        if (!isFinal) return;
 
         if (speechFinal) {
-            // Full utterance complete
-            const full = this._utteranceBuffer 
+            const final = this._utteranceBuffer 
                 ? `${this._utteranceBuffer} ${transcript}`.trim() 
                 : transcript;
             this._utteranceBuffer = '';
-            
-            if (full && this.onTranscript) {
-                this.onTranscript(full);
-            }
+            this.onTranscript?.(final);
         } else {
-            // Accumulate ongoing speech
-            this._utteranceBuffer = this._utteranceBu
+            this._utteranceBuffer = this._utteranceBuffer 
+                ? `${this._utteranceBuffer} ${transcript}`.trim() 
+                : transcript;
+        }
+    }
+
+    _startKeepalive() {
+        this._stopKeepalive();
+        this._keepaliveInterval = setInterval(() => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
+            }
+        }, 5000);
+    }
+
+    _stopKeepalive() {
+        if (this._keepaliveInterval) {
+            clearInterval(this._keepaliveInterval);
+            this._keepaliveInterval = null;
+        }
+    }
+
+    sendAudio(base64Audio) {
+        if (!this.isReady || this.ws?.readyState !== WebSocket.OPEN || !base64Audio) {
+            return;
+        }
+        try {
+            const buffer = Buffer.from(base64Audio, 'base64');
+            this.ws.send(buffer);
+        } catch {}
+    }
+
+    async waitReady() {
+        return new Promise(resolve => {
+            const check = () => this.isReady ? resolve(true) : setTimeout(check, 50);
+            check();
+        });
+    }
+
+    close() {
+        this._closed = true;
+        this.isReady = false;
+        this._stopKeepalive();
+
+        if (this._utteranceBuffer.trim()) {
+            this.onTranscript?.(this._utteranceBuffer.trim());
+        }
+
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            this.ws.send(JSON.stringify({ type: 'CloseStream' }));
+            setTimeout(() => this.ws.close(), 200);
+        }
+    }
+}
