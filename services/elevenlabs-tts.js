@@ -295,7 +295,7 @@ export class ElevenLabsTTS {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
             this.ws.send(JSON.stringify({
-                text: text + " ",
+                text: text,
                 try_trigger_generation: true
             }));
         } else {
