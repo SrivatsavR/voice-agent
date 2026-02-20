@@ -418,11 +418,16 @@ wss.on('connection', (ws) => {
             return;
           }
 
-          const { say, next_node, session } = result;
+          const { say, next_node, session, streamedByNode } = result;
 
           if (say && tts && isActive) {
             callLog.withComponent('Agent').info(say);
-            // The streaming process already sent text chunks to TTS.
+
+            if (!streamedByNode) {
+              callLog.withComponent('TTS').warn('LLM stream parser failed to chunk output. Sending fallback full text.');
+              await tts.sendText(say);
+            }
+
             // Just trigger a flush to terminate the generation.
             tts.flush();
           }

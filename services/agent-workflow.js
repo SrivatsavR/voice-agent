@@ -540,8 +540,10 @@ export function createCallSession(callerPhone = '') {
       userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
     }
 
+    let hasStreamed = false;
     const raw = await runNode(agent, userMessage, (chunk) => {
       if (tts && isActiveCallback && isActiveCallback()) {
+        hasStreamed = true;
         tts.sendText(chunk);
       }
     });
@@ -569,7 +571,8 @@ export function createCallSession(callerPhone = '') {
       say: output.say,
       next_node: nextNode,
       notes: output.notes,
-      session: { ...session }
+      session: { ...session },
+      streamedByNode: hasStreamed
     };
   }
 

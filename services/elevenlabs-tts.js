@@ -109,8 +109,7 @@ export class ElevenLabsTTS {
                             if (response.error) this._log.error('Server error', { error: response.error });
                             // isFinal might not occur on kept-alive streams, but if it does, it's a hard end
                             if (response.isFinal) {
-                                this._log.debug('Generation complete (isFinal) — scheduling speaking-end in 1500ms');
-                                this._scheduleSpeakingEnd();
+                                this._log.debug('Generation complete (isFinal) received.');
                             }
                         } else {
                             // Raw binary audio frame
@@ -125,8 +124,7 @@ export class ElevenLabsTTS {
                         }
                         if (response.error) this._log.error('Server error', { error: response.error });
                         if (response.isFinal) {
-                            this._log.debug('Generation complete (isFinal) — scheduling speaking-end in 1500ms');
-                            this._scheduleSpeakingEnd();
+                            this._log.debug('Generation complete (isFinal) received.');
                         }
                     }
                 } catch (err) {
