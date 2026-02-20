@@ -6,7 +6,6 @@ import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { DeepgramASR } from './services/deepgram-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
-import { getRandomFiller } from './services/silence-filler.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
 import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
@@ -114,7 +113,7 @@ class SilenceFillerManager {
     }
   }
 
-  _fire() {
+  async _fire() {
     if (!this._active || this._paused || !this._tts) return;
 
     if (this._tts.isSpeaking) {
@@ -122,7 +121,22 @@ class SilenceFillerManager {
       return;
     }
 
-    const phrase = this._preparedPhrase || getRandomFiller(this._callSession?.getSession()?.preferred_name);
+    let phrase = this._preparedPhrase;
+
+    // Wait slightly if the LLM is still preparing the phrase
+    if (!phrase) {
+      try {
+        const session = this._callSession?.getSession();
+        if (session) {
+          phrase = await generateContextualFiller(session, this._log);
+        }
+      } catch (e) {
+        this._log.error('Fallback LLM filler failed', e);
+      }
+    }
+
+    // Double-check speaking state after potential await
+    if (!this._active || this._paused || this._tts?.isSpeaking || !phrase) return;
 
     // Final safety check: is TTS still connected and ready?
     if (this._tts.isReady && this._tts.ws?.readyState === WebSocket.OPEN) {
