@@ -80,7 +80,7 @@ export class ElevenLabsTTS {
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                    generation_config: { chunk_length_schedule: [30] }
+                    generation_config: { chunk_length_schedule: [50] }
                 }));
 
                 this._reconnectAttempts = 0;
