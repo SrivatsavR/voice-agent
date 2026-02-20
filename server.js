@@ -381,24 +381,24 @@ wss.on('connection', (ws) => {
 
           const myProcessingId = ++currentProcessingId;
 
-          // Reset silence filler whenever the user says anything
-          silenceFiller?.reset();
-
-          // Pause silence filler while we think
-          silenceFiller?.pause();
-
-          // Interruption gate check
+          // 1. Interruption gate check
           const wasSpeaking = tts?.isSpeaking;
           if (!interruptionManager.shouldProcessTranscript(transcript)) {
-            silenceFiller?.resume();
-            return; // Dropped — interruptions disabled and agent is speaking
+            // Even if dropped, it's human voice activity, so reset the 7s countdown
+            silenceFiller?.reset();
+            return;
           }
 
-          // â”€â”€ Barge-in: user spoke while agent was speaking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-          // Clear Twilio's audio buffer and ElevenLabs stream immediately
+          // 2. Barge-in handling
+          // clearAudio() stops playback but it synchronously fires onSpeakingEnd -> silenceFiller.resume().
+          // Therefore, we must clear AUDIO *BEFORE* we explicitly command the silence filler to pause for the LLM processing.
           if (wasSpeaking && tts) {
             tts.clearAudio();
           }
+
+          // 3. Safely reset and pause the filler for the duration of transcript processing
+          silenceFiller?.reset();
+          silenceFiller?.pause();
 
           callLog.withComponent('User').info(transcript);
           const timer = callLog.withComponent('Workflow').time('processTranscript');
@@ -464,6 +464,11 @@ wss.on('connection', (ws) => {
         logger: callLog,
         // Ultra-fast barge-in: clear audio instantly on first partial transcript!
         onInterim: (partial) => {
+          if (!partial?.trim()) return;
+
+          // Any human voice activity delays the 7s silence timeout!
+          silenceFiller?.reset();
+
           if (isActive && tts && tts.isSpeaking && interruptionManager.shouldProcessTranscript(partial)) {
             callLog.withComponent('User').info(`[Barge-in] Partial: ${partial}`);
             tts.clearAudio();
