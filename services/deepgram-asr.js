@@ -12,6 +12,7 @@ export class DeepgramASR {
         this._keepaliveInterval = null;
         this._utteranceBuffer = '';
         this._connectTimeout = null;
+        this._flushTimeout = null;
         this.options = options;
 
         this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
@@ -84,8 +85,7 @@ export class DeepgramASR {
                 if (msg.type === 'Results') {
                     this._handleTranscript(msg);
                 } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
-                    this.onTranscript?.(this._utteranceBuffer.trim());
-                    this._utteranceBuffer = '';
+                    this._forceFlush();
                 }
             } catch { }
         });
@@ -101,6 +101,17 @@ export class DeepgramASR {
                 setTimeout(() => this._connect(), 1000 * this._reconnectAttempts);
             }
         });
+    }
+
+    _forceFlush() {
+        if (this._flushTimeout) {
+            clearTimeout(this._flushTimeout);
+            this._flushTimeout = null;
+        }
+        if (this._utteranceBuffer.trim()) {
+            this.onTranscript?.(this._utteranceBuffer.trim());
+            this._utteranceBuffer = '';
+        }
     }
 
     _handleTranscript(msg) {
@@ -120,11 +131,21 @@ export class DeepgramASR {
                 ? `${this._utteranceBuffer} ${transcript}`.trim()
                 : transcript;
             this._utteranceBuffer = '';
+
+            if (this._flushTimeout) {
+                clearTimeout(this._flushTimeout);
+                this._flushTimeout = null;
+            }
+
             this.onTranscript?.(final);
         } else {
             this._utteranceBuffer = this._utteranceBuffer
                 ? `${this._utteranceBuffer} ${transcript}`.trim()
                 : transcript;
+
+            // Set safety fallback: if no speech_final arrives within 1.5s, force flush
+            if (this._flushTimeout) clearTimeout(this._flushTimeout);
+            this._flushTimeout = setTimeout(() => this._forceFlush(), 1500);
         }
     }
 
