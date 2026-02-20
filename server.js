@@ -11,8 +11,8 @@ import { generateContextualFiller } from './services/silence-filler-llm.js';
 import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 
-// detect silence after 5s
-const SILENCE_FILLER_TIMEOUT_MS = 5000;
+// detect silence after 7s
+const SILENCE_FILLER_TIMEOUT_MS = 7000;
 
 /**
  * SilenceFillerManager
@@ -53,10 +53,10 @@ class SilenceFillerManager {
 
     if (this._paused) return;
 
-    // 1. Prepare phrase at 4s (using LLM)
+    // 1. Prepare phrase early at 4s (using LLM) to avoid latency issues
     this._prepareTimer = setTimeout(() => this._prepare(), 4000);
-    // 2. Actually fire it at 5s
-    this._fireTimer = setTimeout(() => this._fire(), 5000);
+    // 2. Actually fire it and send to TTS at 7s
+    this._fireTimer = setTimeout(() => this._fire(), 7000);
   }
 
   /** Stop monitoring (call ended) */
@@ -126,7 +126,7 @@ class SilenceFillerManager {
 
     // Final safety check: is TTS still connected and ready?
     if (this._tts.isReady && this._tts.ws?.readyState === WebSocket.OPEN) {
-      this._log.info('Firing silence filler phrase at 5s', { phrase });
+      this._log.info('Firing silence filler phrase at 7s', { phrase });
       this._tts.sendText(phrase);
       this._tts.flush();
     } else {
@@ -356,7 +356,7 @@ wss.on('connection', (ws) => {
         },
         onSpeakingEnd: () => {
           interruptionManager.onSpeakingEnd();
-          silenceFiller?.resume(); // Agent finished: restart 5s countdown
+          silenceFiller?.resume(); // Agent finished: restart 7s countdown
         },
       });
 
