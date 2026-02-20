@@ -33,24 +33,26 @@ class SilenceFillerManager {
     this._tts = null;
     this._callSession = null;
     this._pendingPhrase = null;
+    this._active = false;
   }
 
-  /** Wire up after TTS / callSession are created */
   init(tts, callSession) {
     this._tts = tts;
     this._callSession = callSession;
+    this._active = true;
     this.reset();
   }
 
-  /** Restart the silence countdown */
   reset() {
+    if (!this._active) return;
     this._clearTimers();
     this._timer = setTimeout(() => this._prepare(), SILENCE_FILLER_PREP_MS);
   }
 
-  /** Stop monitoring (call ended) */
   stop() {
+    this._active = false;
     this._clearTimers();
+    this._log.info('Stopped silence filler monitoring');
   }
 
   _clearTimers() {
@@ -62,11 +64,10 @@ class SilenceFillerManager {
       clearTimeout(this._execTimer);
       this._execTimer = null;
     }
-    this._pendingPhrase = null;
   }
 
   _prepare() {
-    if (!this._tts || !this._callSession) return;
+    if (!this._active || !this._tts || !this._callSession) return;
     // Do not prep if the agent is still speaking
     if (this._tts.isSpeaking) {
       this.reset();
@@ -84,7 +85,7 @@ class SilenceFillerManager {
   }
 
   _fire() {
-    if (!this._tts || !this._pendingPhrase) return;
+    if (!this._active || !this._tts || !this._pendingPhrase) return;
 
     // Final check: did agent start speaking in that 1s delay?
     if (this._tts.isSpeaking) {
@@ -97,8 +98,8 @@ class SilenceFillerManager {
     this._tts.sendText(phrase);
     this._tts.flush();
 
-    // Queue next check after this phrase has a chance to play (~4s)
-    this._timer = setTimeout(() => this.reset(), 4000);
+    // Reset countdown after filler is sent - it will loop if silence continues
+    this.reset();
   }
 }
 
