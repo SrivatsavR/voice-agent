@@ -41,6 +41,7 @@ export class ElevenLabsTTS {
         this._onSpeakingEnd = options.onSpeakingEnd || (() => { });
         this._isSpeaking = false;
         this._speakingEndTimer = null; // Delayed end for buffer drain
+        this._expectedTwilioEndTime = 0;
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -185,9 +186,6 @@ export class ElevenLabsTTS {
             this._isSpeaking = true;
             try { this._onSpeakingStart(); } catch { }
         }
-        // Always reset the debounce timer when speech chunk is received
-        // This ensures tracking works even if isFinal is never sent by streaming API
-        this._scheduleSpeakingEnd();
     }
 
     _cancelSpeakingEndTimer() {
@@ -202,12 +200,12 @@ export class ElevenLabsTTS {
      * This allows Twilio's jitter buffer to fully play out the last
      * audio chunk before we flip back to "not speaking" state.
      */
-    _scheduleSpeakingEnd() {
+    _scheduleSpeakingEnd(delayMs = 1500) {
         this._cancelSpeakingEndTimer();
         this._speakingEndTimer = setTimeout(() => {
             this._speakingEndTimer = null;
             this._markSpeakingEnd();
-        }, 1500);
+        }, delayMs);
     }
 
     _markSpeakingEnd() {
@@ -223,6 +221,7 @@ export class ElevenLabsTTS {
      * Also kills the ElevenLabs stream to stop further audio generation.
      */
     clearAudio() {
+        this._expectedTwilioEndTime = 0;
         this._cancelSpeakingEndTimer();
 
         // 1. Clear Twilio buffer
@@ -320,6 +319,22 @@ export class ElevenLabsTTS {
 
     _sendToTwilio(audioBase64) {
         if (!audioBase64 || audioBase64.length === 0) return;
+
+        // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
+        const pcmBytes = Buffer.from(audioBase64, 'base64').length;
+        const chunkDurationMs = (pcmBytes / 8000) * 1000;
+
+        const now = Date.now();
+        if (this._expectedTwilioEndTime < now) {
+            this._expectedTwilioEndTime = now + chunkDurationMs;
+        } else {
+            this._expectedTwilioEndTime += chunkDurationMs;
+        }
+
+        // Add 500ms buffer for minor network jitter
+        const timeUntilEnd = this._expectedTwilioEndTime - now;
+        this._scheduleSpeakingEnd(timeUntilEnd + 500);
+
         if (this.twilioWs.readyState === WebSocket.OPEN) {
             this.twilioWs.send(JSON.stringify({
                 event: 'media',

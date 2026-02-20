@@ -422,9 +422,8 @@ wss.on('connection', (ws) => {
 
           if (say && tts && isActive) {
             callLog.withComponent('Agent').info(say);
-            // We still send the full say at the end just in case the streaming missed anything
-            // and trigger a flush.
-            await tts.sendText(say);
+            // The streaming process already sent text chunks to TTS.
+            // Just trigger a flush to terminate the generation.
             tts.flush();
           }
 
@@ -451,7 +450,10 @@ wss.on('connection', (ws) => {
             closeAfterSpeaking();
           } else {
             // Processing done, not terminal: Resume silence filler for next gap
-            silenceFiller?.resume();
+            // ONLY if the agent isn't currently speaking (if it is, onSpeakingEnd will handle it)
+            if (!tts?.isSpeaking) {
+              silenceFiller?.resume();
+            }
           }
         } catch (err) {
           callLog.withComponent('WS').error('ASR callback error', err);
