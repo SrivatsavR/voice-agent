@@ -114,7 +114,7 @@ const wss = new WebSocketServer({ noServer: true });
 
 // â”€â”€â”€ Determine ASR provider from env â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const ASR_PROVIDER = (process.env.ASR_PROVIDER || 'elevenlabs').toLowerCase();
+const ASR_PROVIDER = (process.env.ASR_PROVIDER || 'deepgram').toLowerCase();
 serverLog.info('ASR provider configured', { provider: ASR_PROVIDER });
 
 // â”€â”€â”€ Default for interruptions (configurable via env) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
