@@ -6,23 +6,13 @@ import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { DeepgramASR } from './services/deepgram-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
+import { getRandomFiller } from './services/silence-filler.js';
 import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 
-// â”€â”€â”€ Silence Filler Phrases â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-// Used when the user hasn't spoken for SILENCE_FILLER_TIMEOUT_MS while the
-// agent is also silent. Picks the most contextually neutral phrase.
-const SILENCE_FILLER_TIMEOUT_MS = 5000;
-const SILENCE_FILLER_PHRASES = [
-  "Are you still there?",
-  "I'm here whenever you're ready.",
-  "Take your time, I'm listening.",
-  "Just checking in, is everything okay?",
-  "Feel free to continue whenever you're ready.",
-  "I didn't catch that, could you speak up a bit?",
-  "No rush at all, I'm right here.",
-  "Whenever you're ready, go ahead.",
-];
+// detect silence after 4s, speak at 5s (1s buffer for "generation")
+const SILENCE_FILLER_PREP_MS = 4000;
+const SILENCE_FILLER_EXEC_DELAY_MS = 1000;
 
 /**
  * SilenceFillerManager
@@ -38,50 +28,76 @@ class SilenceFillerManager {
   constructor(log) {
     this._log = log.withComponent('SilenceFiller');
     this._timer = null;
+    this._execTimer = null;
     this._tts = null;
     this._callSession = null;
+    this._pendingPhrase = null;
   }
 
   /** Wire up after TTS / callSession are created */
   init(tts, callSession) {
     this._tts = tts;
     this._callSession = callSession;
-    this.reset(); // Start the first countdown
+    this.reset();
   }
 
   /** Restart the silence countdown */
   reset() {
-    this._clearTimer();
-    this._timer = setTimeout(() => this._fire(), SILENCE_FILLER_TIMEOUT_MS);
+    this._clearTimers();
+    this._timer = setTimeout(() => this._prepare(), SILENCE_FILLER_PREP_MS);
   }
 
   /** Stop monitoring (call ended) */
   stop() {
-    this._clearTimer();
+    this._clearTimers();
   }
 
-  _clearTimer() {
+  _clearTimers() {
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = null;
     }
+    if (this._execTimer) {
+      clearTimeout(this._execTimer);
+      this._execTimer = null;
+    }
+    this._pendingPhrase = null;
+  }
+
+  _prepare() {
+    if (!this._tts || !this._callSession) return;
+    // Do not prep if the agent is still speaking
+    if (this._tts.isSpeaking) {
+      this.reset();
+      return;
+    }
+
+    const session = this._callSession.getSession();
+    const name = session.preferred_name || session.name_spoken;
+    this._pendingPhrase = getRandomFiller(name);
+
+    this._log.info('Prepared silence filler phrase at 4s', { phrase: this._pendingPhrase });
+
+    // Schedule execution at the 5th second (1s later)
+    this._execTimer = setTimeout(() => this._fire(), SILENCE_FILLER_EXEC_DELAY_MS);
   }
 
   _fire() {
-    if (!this._tts || !this._callSession) return;
-    // Do not fire if the agent is still speaking (e.g. long TTS response)
+    if (!this._tts || !this._pendingPhrase) return;
+
+    // Final check: did agent start speaking in that 1s delay?
     if (this._tts.isSpeaking) {
-      this.reset(); // Check again in another 5s
+      this.reset();
       return;
     }
-    const phrase = SILENCE_FILLER_PHRASES[
-      Math.floor(Math.random() * SILENCE_FILLER_PHRASES.length)
-    ];
-    this._log.info('Firing silence filler phrase', { phrase });
+
+    const phrase = this._pendingPhrase;
+    this._log.info('Firing silence filler phrase at 5s', { phrase });
     this._tts.sendText(phrase);
     this._tts.flush();
+
     // Queue next check after this phrase has a chance to play (~4s)
-    this._timer = setTimeout(() => this._fire(), SILENCE_FILLER_TIMEOUT_MS + 4000);
+    this._timer = setTimeout(() => this.reset(), 4000);
   }
 }
 
@@ -337,11 +353,25 @@ wss.on('connection', (ws) => {
 
           if (callSession.isTerminal()) {
             isActive = false;
-            callLog.withComponent('Call').info('Call reached terminal node', {
+            callLog.withComponent('Call').info('Call reached terminal node — waiting for TTS to finish before closing', {
               outcome: session.call_outcome,
               node: next_node,
             });
-            setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 5000);
+
+            // Wait for TTS to finish speaking (if it started) then close after a 5s grace period
+            const closeAfterSpeaking = () => {
+              const checkInterval = setInterval(() => {
+                if (!tts.isSpeaking) {
+                  clearInterval(checkInterval);
+                  callLog.withComponent('Call').info('TTS finished — closing call in 5s');
+                  setTimeout(() => {
+                    if (ws.readyState === WebSocket.OPEN) ws.close();
+                  }, 5000);
+                }
+              }, 500);
+            };
+
+            closeAfterSpeaking();
           }
         } catch (err) {
           callLog.withComponent('WS').error('ASR callback error', err);
