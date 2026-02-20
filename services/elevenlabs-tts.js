@@ -1,9 +1,13 @@
 import { WebSocket } from 'ws';
+import { Logger } from '../utils/logger.js';
 
 /**
  * ElevenLabs TTS (Rachel / Flash v2.5 / Mulaw 8kHz)
  * 
- * KEY FIXES (v14):
+ * Changes:
+ * - Integrated structured Logger (replaces console.log)
+ * - Speaking lifecycle hooks: onSpeakingStart / onSpeakingEnd
+ *   Used by InterruptionManager to track when the agent is talking
  * - Proper connection lifecycle with explicit state tracking
  * - Better heartbeat that sends proper flush signals
  * - Reconnect support for dropped connections
@@ -14,15 +18,32 @@ const MODEL_ID = 'eleven_flash_v2_5';
 const OUTPUT_FORMAT = 'ulaw_8000';
 
 export class ElevenLabsTTS {
-    constructor(twilioWs, streamSid) {
+    /**
+     * @param {WebSocket} twilioWs - The Twilio media-stream WebSocket
+     * @param {string} streamSid - Twilio stream SID
+     * @param {object} [options]
+     * @param {Logger} [options.logger] - Call-scoped logger
+     * @param {function} [options.onSpeakingStart] - Called when TTS audio starts
+     * @param {function} [options.onSpeakingEnd] - Called when TTS generation is complete
+     */
+    constructor(twilioWs, streamSid, options = {}) {
         this.twilioWs = twilioWs;
         this.streamSid = streamSid;
         this.ws = null;
         this.isReady = false;
-        this._closed = false;   // True when intentionally closed
+        this._closed = false;
         this._heartbeatInterval = null;
         this._reconnectAttempts = 0;
         this._maxReconnectAttempts = 3;
+
+        // Hooks
+        this._onSpeakingStart = options.onSpeakingStart || (() => { });
+        this._onSpeakingEnd = options.onSpeakingEnd || (() => { });
+        this._isSpeaking = false;
+
+        // Logger
+        this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
+
         this._connectPromise = this._connect();
     }
 
@@ -46,13 +67,13 @@ export class ElevenLabsTTS {
 
             // Timeout: resolve after 10s even if not connected
             const timeout = setTimeout(() => {
-                console.warn('[TTS] Connection timed out after 10s');
+                this._log.warn('Connection timed out after 10s');
                 safeResolve();
             }, 10000);
 
             this.ws.on('open', () => {
                 this.isReady = true;
-                console.log('[TTS] Connected');
+                this._log.info('WebSocket connected');
 
                 // Initialize with BOS (Beginning of Stream) message
                 // Minimum allowed chunk_length_schedule item is 50
@@ -76,21 +97,30 @@ export class ElevenLabsTTS {
                         const text = data.toString();
                         if (text.startsWith('{')) {
                             const response = JSON.parse(text);
-                            if (response.audio) this._sendToTwilio(response.audio);
-                            if (response.error) console.error('[TTS] Server error:', response.error);
+                            if (response.audio) {
+                                this._markSpeakingStart();
+                                this._sendToTwilio(response.audio);
+                            }
+                            if (response.error) this._log.error('Server error', { error: response.error });
                             if (response.isFinal) {
-                                console.log('[TTS] Generation complete (isFinal)');
+                                this._log.debug('Generation complete (isFinal)');
+                                this._markSpeakingEnd();
                             }
                         } else {
                             // Raw binary audio frame
+                            this._markSpeakingStart();
                             this._sendToTwilio(data.toString('base64'));
                         }
                     } else if (typeof data === 'string' && data.startsWith('{')) {
                         const response = JSON.parse(data);
-                        if (response.audio) this._sendToTwilio(response.audio);
-                        if (response.error) console.error('[TTS] Server error:', response.error);
+                        if (response.audio) {
+                            this._markSpeakingStart();
+                            this._sendToTwilio(response.audio);
+                        }
+                        if (response.error) this._log.error('Server error', { error: response.error });
                         if (response.isFinal) {
-                            console.log('[TTS] Generation complete (isFinal)');
+                            this._log.debug('Generation complete (isFinal)');
+                            this._markSpeakingEnd();
                         }
                     }
                 } catch (err) {
@@ -99,7 +129,7 @@ export class ElevenLabsTTS {
             });
 
             this.ws.on('error', (err) => {
-                console.error('[TTS] Error:', err.message);
+                this._log.error('WebSocket error', err);
                 this.isReady = false;
                 this._stopHeartbeat();
                 clearTimeout(timeout);
@@ -108,16 +138,17 @@ export class ElevenLabsTTS {
 
             this.ws.on('close', (code, reason) => {
                 const reasonStr = reason ? reason.toString() : '';
-                console.log(`[TTS] Closed (code=${code}, reason=${reasonStr})`);
+                this._log.info('WebSocket closed', { code, reason: reasonStr });
                 this.isReady = false;
                 this._stopHeartbeat();
+                this._markSpeakingEnd(); // Ensure speaking state is cleared
                 clearTimeout(timeout);
 
                 // Auto-reconnect on unexpected close
                 if (!this._closed && code !== 1000 && this._reconnectAttempts < this._maxReconnectAttempts) {
                     this._reconnectAttempts++;
                     const delay = Math.min(1000 * this._reconnectAttempts, 5000);
-                    console.log(`[TTS] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})`);
+                    this._log.warn('Reconnecting', { delay_ms: delay, attempt: this._reconnectAttempts, max: this._maxReconnectAttempts });
                     setTimeout(() => {
                         if (!this._closed) {
                             this._connectPromise = this._connect();
@@ -130,6 +161,24 @@ export class ElevenLabsTTS {
         });
     }
 
+    // ── Speaking state hooks ──────────────────────────────────────────────
+
+    _markSpeakingStart() {
+        if (!this._isSpeaking) {
+            this._isSpeaking = true;
+            try { this._onSpeakingStart(); } catch { }
+        }
+    }
+
+    _markSpeakingEnd() {
+        if (this._isSpeaking) {
+            this._isSpeaking = false;
+            try { this._onSpeakingEnd(); } catch { }
+        }
+    }
+
+    // ── Heartbeat ─────────────────────────────────────────────────────────
+
     _startHeartbeat() {
         this._stopHeartbeat();
         // Send heartbeat every 15s to keep connection alive
@@ -138,7 +187,7 @@ export class ElevenLabsTTS {
                 try {
                     this.ws.send(JSON.stringify({ text: " " }));
                 } catch (err) {
-                    console.error('[TTS] Heartbeat send error:', err.message);
+                    this._log.error('Heartbeat send error', err);
                 }
             }
         }, 15000);
@@ -157,12 +206,13 @@ export class ElevenLabsTTS {
 
     sendText(text) {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
+            this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
             this.ws.send(JSON.stringify({
                 text: text + " ",
                 try_trigger_generation: true
             }));
         } else {
-            console.warn(`[TTS] Cannot send text — ready=${this.isReady}, wsState=${this.ws?.readyState}`);
+            this._log.warn('Cannot send text', { ready: this.isReady, wsState: this.ws?.readyState });
         }
     }
 
@@ -195,6 +245,9 @@ export class ElevenLabsTTS {
         this._closed = true;
         this.isReady = false;
         this._stopHeartbeat();
+        this._markSpeakingEnd();
+        this._log.info('Closing TTS connection');
+
         if (this.ws?.readyState === WebSocket.OPEN) {
             try {
                 // Send proper EOS (End of Stream) signal

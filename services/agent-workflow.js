@@ -1,4 +1,5 @@
 import { Agent, Runner, withTrace } from '@openai/agents';
+import { Logger } from '../utils/logger.js';
 
 // ─── ASR Voice Context (injected into every node) ────────────────────────────
 const ASR_VOICE_CONTEXT = `
@@ -247,7 +248,7 @@ const DEFAULT_SESSION = {
 
 // ─── Helper: Parse agent output ───────────────────────────────────────────────
 
-function parseAgentOutput(rawOutput) {
+function parseAgentOutput(rawOutput, log) {
     if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
 
     let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
@@ -264,17 +265,25 @@ function parseAgentOutput(rawOutput) {
             notes: parsed.notes ?? ''
         };
     } catch {
-        console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
+        (log || new Logger('Workflow')).error('Failed to parse agent JSON output', { raw: text.substring(0, 200) });
         return { say: String(text), updates: {}, next_node: 'CONTINUE', notes: 'parse_error' };
     }
 }
 
 // ─── Session Factory ──────────────────────────────────────────────────────────
 
-export function createCallSession(callerPhone = '') {
+/**
+ * @param {string} callerPhone
+ * @param {object} [options]
+ * @param {Logger} [options.logger] - Call-scoped logger
+ */
+export function createCallSession(callerPhone = '', options = {}) {
+    const log = (options.logger || new Logger('Workflow')).withComponent('Workflow');
     const conversationHistory = [];
     const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
     let currentNode = 'NODE_0_WELCOME';
+
+    log.info('Call session created', { callerPhone, startNode: currentNode });
 
     const runner = new Runner({
         traceMetadata: {
@@ -311,11 +320,14 @@ export function createCallSession(callerPhone = '') {
     // ── Public API ──────────────────────────────────────────────────────────
 
     async function getWelcome() {
+        const timer = log.time('getWelcome');
         const raw = await runNode(welcomeAgent, 'Start the call.');
-        const output = parseAgentOutput(raw);
+        const output = parseAgentOutput(raw, log);
         if (output.updates) Object.assign(session, output.updates);
         markNodeDone('NODE_0_WELCOME');
         currentNode = output.next_node === 'CONTINUE' ? 'NODE_1_NAME_INTEREST' : output.next_node;
+        log.timeEnd(timer, { next_node: currentNode });
+        log.info('Welcome message generated', { say_preview: (output.say || '').substring(0, 80) });
         return output.say || "Hello, thank you for calling Meesho. This is the reseller onboarding team.";
     }
 
@@ -331,7 +343,7 @@ export function createCallSession(callerPhone = '') {
 
         const agent = NODE_AGENTS[currentNode];
         if (!agent) {
-            console.error(`[Workflow] No agent found for node: ${currentNode}`);
+            log.error('No agent found for node', { node: currentNode });
             return {
                 say: "Thank you for calling. Goodbye.",
                 next_node: 'TERM_COMPLETE',
@@ -346,8 +358,9 @@ export function createCallSession(callerPhone = '') {
             userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
         }
 
+        const timer = log.time('processTranscript');
         const raw = await runNode(agent, userMessage);
-        const output = parseAgentOutput(raw);
+        const output = parseAgentOutput(raw, log);
 
         // Merge updates into session
         if (output.updates && typeof output.updates === 'object') {
@@ -359,9 +372,11 @@ export function createCallSession(callerPhone = '') {
 
         if (nextNode !== prevNode) {
             markNodeDone(prevNode);
+            log.info('Node transition', { from: prevNode, to: nextNode });
         }
 
         currentNode = nextNode;
+        log.timeEnd(timer, { node: currentNode, say_preview: (output.say || '').substring(0, 60) });
 
         return {
             say: output.say,

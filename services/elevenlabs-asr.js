@@ -1,4 +1,5 @@
 import { WebSocket } from 'ws';
+import { Logger } from '../utils/logger.js';
 
 /**
  * Manages the WebSocket connection to ElevenLabs ASR (Scribe v2 Realtime).
@@ -12,7 +13,12 @@ import { WebSocket } from 'ws';
  * Previous versions were sending raw binary Buffers which ElevenLabs rejected immediately.
  */
 export class ElevenLabsASR {
-    constructor(onTranscript) {
+    /**
+     * @param {function} onTranscript - Callback for committed transcripts
+     * @param {object} [options]
+     * @param {Logger} [options.logger] - Call-scoped logger
+     */
+    constructor(onTranscript, options = {}) {
         this.onTranscript = onTranscript;
         this.ws = null;
         this.isReady = false;
@@ -20,6 +26,9 @@ export class ElevenLabsASR {
         this._reconnectAttempts = 0;
         this._maxReconnectAttempts = 3;
         this._keepaliveInterval = null;
+
+        this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
+
         this._connectPromise = this._connect();
     }
 
@@ -44,7 +53,7 @@ export class ElevenLabsASR {
             });
             const url = `wss://api.elevenlabs.io/v1/speech-to-text/realtime?${params.toString()}`;
 
-            console.log(`[ASR] Connecting... (attempt ${this._reconnectAttempts + 1})`);
+            this._log.info('Connecting to ElevenLabs ASR', { attempt: this._reconnectAttempts + 1 });
 
             this.ws = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -57,7 +66,7 @@ export class ElevenLabsASR {
 
             const timeout = setTimeout(() => {
                 if (!resolved) {
-                    console.warn('[ASR] Timed out waiting for session_started (10s)');
+                    this._log.warn('Timed out waiting for session_started (10s)');
                     if (this.ws?.readyState === WebSocket.OPEN) {
                         this.isReady = true;
                     }
@@ -66,7 +75,7 @@ export class ElevenLabsASR {
             }, 10000);
 
             this.ws.on('open', () => {
-                console.log('[ASR] WebSocket open, waiting for session_started...');
+                this._log.info('WebSocket open, waiting for session_started');
                 this._reconnectAttempts = 0;
             });
 
@@ -77,7 +86,7 @@ export class ElevenLabsASR {
                     const msgType = response.type || response.message_type;
 
                     if (msgType === 'session_started') {
-                        console.log('[ASR] Session started by server');
+                        this._log.info('Session started by server');
                         this.isReady = true;
                         clearTimeout(timeout);
                         this._startKeepalive();
@@ -85,17 +94,16 @@ export class ElevenLabsASR {
                     } else if (msgType === 'transcript' || msgType === 'committed_transcript' || msgType === 'final_transcript') {
                         const transcript = (response.transcript || response.text || '').trim();
                         if (transcript && this.onTranscript) {
-                            console.log(`[ASR] ${msgType.toUpperCase()}: ${transcript}`);
+                            this._log.info(`Committed transcript: ${transcript}`, { type: msgType });
                             this.onTranscript(transcript);
                         }
                     } else if (msgType === 'partial_transcript') {
                         const transcript = (response.transcript || response.text || '').trim();
-                        if (transcript) console.log(`[ASR] partial: ${transcript}`);
+                        if (transcript) this._log.debug(`Partial: ${transcript}`);
                     } else if (msgType === 'error' || response.error) {
-                        console.error('[ASR] Server error:', response.error || response.message || JSON.stringify(response));
+                        this._log.error('Server error', { error: response.error || response.message || response });
                     } else {
-                        // Log any other message types for debugging
-                        console.log(`[ASR] Received msg type: ${msgType}`);
+                        this._log.debug(`Received msg type: ${msgType}`);
                     }
                 } catch (err) {
                     // Not JSON, ignore
@@ -103,7 +111,7 @@ export class ElevenLabsASR {
             });
 
             this.ws.on('error', (err) => {
-                console.error('[ASR] WebSocket Error:', err.message);
+                this._log.error('WebSocket error', err);
                 this.isReady = false;
                 this._stopKeepalive();
                 clearTimeout(timeout);
@@ -112,7 +120,7 @@ export class ElevenLabsASR {
 
             this.ws.on('close', (code, reason) => {
                 const reasonStr = reason ? reason.toString() : '';
-                console.log(`[ASR] Disconnected (code=${code}, reason=${reasonStr})`);
+                this._log.info('Disconnected', { code, reason: reasonStr });
                 this.isReady = false;
                 this._stopKeepalive();
                 clearTimeout(timeout);
@@ -120,14 +128,14 @@ export class ElevenLabsASR {
                 if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
                     this._reconnectAttempts++;
                     const delay = Math.min(1000 * this._reconnectAttempts, 5000);
-                    console.log(`[ASR] Reconnecting in ${delay}ms (attempt ${this._reconnectAttempts}/${this._maxReconnectAttempts})`);
+                    this._log.warn('Reconnecting', { delay_ms: delay, attempt: this._reconnectAttempts, max: this._maxReconnectAttempts });
                     setTimeout(() => {
                         if (!this._closed) {
                             this._connectPromise = this._connect();
                         }
                     }, delay);
                 } else if (!this._closed) {
-                    console.error(`[ASR] Max reconnect attempts (${this._maxReconnectAttempts}) exhausted`);
+                    this._log.error('Max reconnect attempts exhausted', { max: this._maxReconnectAttempts });
                 }
 
                 safeResolve();
@@ -186,6 +194,7 @@ export class ElevenLabsASR {
         this._closed = true;
         this.isReady = false;
         this._stopKeepalive();
+        this._log.info('Closing ASR connection');
         if (this.ws?.readyState === WebSocket.OPEN) {
             this.ws.close(1000, 'call_ended');
         }
