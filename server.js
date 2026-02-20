@@ -11,6 +11,7 @@ import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 
 // detect silence after 4s, speak at 5s (1s buffer for "generation")
+const SILENCE_FILLER_TIMEOUT_MS = 5000;
 const SILENCE_FILLER_PREP_MS = 4000;
 const SILENCE_FILLER_EXEC_DELAY_MS = 1000;
 
