@@ -40,6 +40,7 @@ export class ElevenLabsTTS {
         this._onSpeakingStart = options.onSpeakingStart || (() => { });
         this._onSpeakingEnd = options.onSpeakingEnd || (() => { });
         this._isSpeaking = false;
+        this._speakingEndTimer = null; // Delayed end for buffer drain
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -103,8 +104,8 @@ export class ElevenLabsTTS {
                             }
                             if (response.error) this._log.error('Server error', { error: response.error });
                             if (response.isFinal) {
-                                this._log.debug('Generation complete (isFinal)');
-                                this._markSpeakingEnd();
+                                this._log.debug('Generation complete (isFinal) — scheduling speaking-end in 1500ms');
+                                this._scheduleSpeakingEnd();
                             }
                         } else {
                             // Raw binary audio frame
@@ -119,8 +120,8 @@ export class ElevenLabsTTS {
                         }
                         if (response.error) this._log.error('Server error', { error: response.error });
                         if (response.isFinal) {
-                            this._log.debug('Generation complete (isFinal)');
-                            this._markSpeakingEnd();
+                            this._log.debug('Generation complete (isFinal) — scheduling speaking-end in 1500ms');
+                            this._scheduleSpeakingEnd();
                         }
                     }
                 } catch (err) {
@@ -141,6 +142,7 @@ export class ElevenLabsTTS {
                 this._log.info('WebSocket closed', { code, reason: reasonStr });
                 this.isReady = false;
                 this._stopHeartbeat();
+                this._cancelSpeakingEndTimer();
                 this._markSpeakingEnd(); // Ensure speaking state is cleared
                 clearTimeout(timeout);
 
@@ -163,18 +165,63 @@ export class ElevenLabsTTS {
 
     // ── Speaking state hooks ──────────────────────────────────────────────
 
+    get isSpeaking() {
+        return this._isSpeaking;
+    }
+
     _markSpeakingStart() {
+        // Cancel any pending end timer — audio is still coming in
+        this._cancelSpeakingEndTimer();
         if (!this._isSpeaking) {
             this._isSpeaking = true;
             try { this._onSpeakingStart(); } catch { }
         }
     }
 
+    _cancelSpeakingEndTimer() {
+        if (this._speakingEndTimer) {
+            clearTimeout(this._speakingEndTimer);
+            this._speakingEndTimer = null;
+        }
+    }
+
+    /**
+     * Schedule speaking-end after a 1500ms drain window.
+     * This allows Twilio's jitter buffer to fully play out the last
+     * audio chunk before we flip back to "not speaking" state.
+     */
+    _scheduleSpeakingEnd() {
+        this._cancelSpeakingEndTimer();
+        this._speakingEndTimer = setTimeout(() => {
+            this._speakingEndTimer = null;
+            this._markSpeakingEnd();
+        }, 1500);
+    }
+
     _markSpeakingEnd() {
+        this._cancelSpeakingEndTimer();
         if (this._isSpeaking) {
             this._isSpeaking = false;
             try { this._onSpeakingEnd(); } catch { }
         }
+    }
+
+    /**
+     * Immediately stop TTS playback by sending a Twilio 'clear' event.
+     * This drains Twilio's audio queue so the caller stops hearing the agent.
+     * Call this when a barge-in is detected.
+     */
+    clearAudio() {
+        this._cancelSpeakingEndTimer();
+        if (this.twilioWs.readyState === WebSocket.OPEN) {
+            this._log.info('Sending clear event to Twilio (barge-in)');
+            this.twilioWs.send(JSON.stringify({
+                event: 'clear',
+                streamSid: this.streamSid,
+            }));
+        }
+        // Immediately mark as not-speaking so filler/silence logic resets
+        this._markSpeakingEnd();
     }
 
     // ── Heartbeat ─────────────────────────────────────────────────────────
@@ -245,6 +292,7 @@ export class ElevenLabsTTS {
         this._closed = true;
         this.isReady = false;
         this._stopHeartbeat();
+        this._cancelSpeakingEndTimer();
         this._markSpeakingEnd();
         this._log.info('Closing TTS connection');
 
@@ -253,12 +301,12 @@ export class ElevenLabsTTS {
                 // Send proper EOS (End of Stream) signal
                 this.ws.send(JSON.stringify({ text: "" }));
             } catch { }
-            // Give ElevenLabs a moment to process, then close
+            // Give ElevenLabs 2s to flush final audio before hard-close
             setTimeout(() => {
                 if (this.ws?.readyState === WebSocket.OPEN) {
                     this.ws.close(1000, 'call_ended');
                 }
-            }, 500);
+            }, 2000);
         }
     }
 }
