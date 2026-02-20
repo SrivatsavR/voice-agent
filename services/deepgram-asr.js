@@ -37,9 +37,11 @@ export class DeepgramASR {
             channels: '1',
             punctuate: 'true',
             interim_results: 'true',
-            endpointing: '200',
+            endpointing: '300',
             utterance_end_ms: '1000',
-            language: 'en'
+            vad_events: 'true',
+            smart_format: 'true',
+            language: 'en-IN'
         });
 
         const url = `wss://api.deepgram.com/v1/listen?${params}`;
@@ -143,9 +145,9 @@ export class DeepgramASR {
                 ? `${this._utteranceBuffer} ${transcript}`.trim()
                 : transcript;
 
-            // Set safety fallback: if no speech_final arrives within 1.5s, force flush
+            // Set safety fallback: if no speech_final arrives within 800ms (due to phone static confusing VAD), force flush
             if (this._flushTimeout) clearTimeout(this._flushTimeout);
-            this._flushTimeout = setTimeout(() => this._forceFlush(), 1500);
+            this._flushTimeout = setTimeout(() => this._forceFlush(), 800);
         }
     }
 
