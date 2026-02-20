@@ -87,7 +87,7 @@ export class DeepgramASR {
                 if (msg.type === 'Results') {
                     this._handleTranscript(msg);
                 } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
-                    this._forceFlush();
+                    // Ignore Deepgram's native utterance end to strictly enforce 5s voice inactivity flush
                 }
             } catch { }
         });
@@ -121,34 +121,24 @@ export class DeepgramASR {
         if (!transcript) return;
 
         const isFinal = msg.is_final;
-        const speechFinal = msg.speech_final;
 
         if (!isFinal) {
-            this.options.onInterim?.(transcript);
+            this.options.onInterim?.(transcript); // Still immediately calls TTS clearAudio
+
+            // Wait for 5 seconds of voice inactivity
+            if (this._flushTimeout) clearTimeout(this._flushTimeout);
+            this._flushTimeout = setTimeout(() => this._forceFlush(), 5000);
             return;
         }
 
-        if (speechFinal) {
-            const final = this._utteranceBuffer
-                ? `${this._utteranceBuffer} ${transcript}`.trim()
-                : transcript;
-            this._utteranceBuffer = '';
+        // It is final
+        this._utteranceBuffer = this._utteranceBuffer
+            ? `${this._utteranceBuffer} ${transcript}`.trim()
+            : transcript;
 
-            if (this._flushTimeout) {
-                clearTimeout(this._flushTimeout);
-                this._flushTimeout = null;
-            }
-
-            this.onTranscript?.(final);
-        } else {
-            this._utteranceBuffer = this._utteranceBuffer
-                ? `${this._utteranceBuffer} ${transcript}`.trim()
-                : transcript;
-
-            // Set safety fallback: if no speech_final arrives within 800ms (due to phone static confusing VAD), force flush
-            if (this._flushTimeout) clearTimeout(this._flushTimeout);
-            this._flushTimeout = setTimeout(() => this._forceFlush(), 800);
-        }
+        // Reset 5s voice inactivity timer on final piece
+        if (this._flushTimeout) clearTimeout(this._flushTimeout);
+        this._flushTimeout = setTimeout(() => this._forceFlush(), 5000);
     }
 
     _startKeepalive() {

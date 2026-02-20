@@ -26,13 +26,11 @@ const SILENCE_FILLER_TIMEOUT_MS = 7000;
 class SilenceFillerManager {
   constructor(log) {
     this._log = log.withComponent('SilenceFiller');
-    this._prepareTimer = null;
     this._fireTimer = null;
     this._tts = null;
     this._callSession = null;
     this._active = false;
     this._paused = false;
-    this._preparedPhrase = null;
   }
 
   /** Wire up after TTS / callSession are created */
@@ -48,14 +46,11 @@ class SilenceFillerManager {
   reset() {
     if (!this._active) return;
     this._clearTimers();
-    this._preparedPhrase = null;
 
     if (this._paused) return;
 
-    // 1. Prepare phrase early at 4s (using LLM) to avoid latency issues
-    this._prepareTimer = setTimeout(() => this._prepare(), 4000);
-    // 2. Actually fire it and send to TTS at 7s
-    this._fireTimer = setTimeout(() => this._fire(), 7000);
+    // Fire static phrase at 10s of mutual silence
+    this._fireTimer = setTimeout(() => this._fire(), 10000);
   }
 
   /** Stop monitoring (call ended) */
@@ -83,37 +78,13 @@ class SilenceFillerManager {
   }
 
   _clearTimers() {
-    if (this._prepareTimer) {
-      clearTimeout(this._prepareTimer);
-      this._prepareTimer = null;
-    }
     if (this._fireTimer) {
       clearTimeout(this._fireTimer);
       this._fireTimer = null;
     }
   }
 
-  async _prepare() {
-    if (!this._active || this._paused || this._tts?.isSpeaking) return;
-
-    try {
-      const session = this._callSession?.getSession();
-      if (!session) return;
-
-      // LLM generation takes ~500-1000ms
-      const phrase = await generateContextualFiller(session, this._log);
-
-      // Re-verify state after await
-      if (!this._active || this._paused || this._tts?.isSpeaking) return;
-
-      this._preparedPhrase = phrase;
-      this._log.info('Prepared silence filler phrase at 4s', { phrase: this._preparedPhrase });
-    } catch (err) {
-      this._log.error('Failed to prepare LLM filler', err);
-    }
-  }
-
-  async _fire() {
+  _fire() {
     if (!this._active || this._paused || !this._tts) return;
 
     if (this._tts.isSpeaking) {
@@ -121,26 +92,12 @@ class SilenceFillerManager {
       return;
     }
 
-    let phrase = this._preparedPhrase;
-
-    // Wait slightly if the LLM is still preparing the phrase
-    if (!phrase) {
-      try {
-        const session = this._callSession?.getSession();
-        if (session) {
-          phrase = await generateContextualFiller(session, this._log);
-        }
-      } catch (e) {
-        this._log.error('Fallback LLM filler failed', e);
-      }
-    }
-
-    // Double-check speaking state after potential await
-    if (!this._active || this._paused || this._tts?.isSpeaking || !phrase) return;
-
     // Final safety check: is TTS still connected and ready?
     if (this._tts.isReady && this._tts.ws?.readyState === WebSocket.OPEN) {
-      this._log.info('Firing silence filler phrase at 7s', { phrase });
+      const name = this._callSession?.getSession()?.preferred_name || '';
+      const phrase = name ? `Hello ${name}, are we still connected?` : `Hello, are we still connected?`;
+
+      this._log.info('Firing silence filler phrase at 10s', { phrase });
       this._tts.sendText(phrase);
       this._tts.flush();
     } else {
