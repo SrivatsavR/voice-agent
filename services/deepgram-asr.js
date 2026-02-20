@@ -12,6 +12,7 @@ export class DeepgramASR {
         this._keepaliveInterval = null;
         this._utteranceBuffer = '';
         this._connectTimeout = null;
+        this.options = options;
 
         this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
         process.nextTick(() => this._connect());
@@ -69,9 +70,9 @@ export class DeepgramASR {
         });
 
         this.ws.on('unexpected-response', (req, res) => {
-            this._log.error('🚫 Deepgram handshake failed', { 
+            this._log.error('🚫 Deepgram handshake failed', {
                 status: res.statusCode,
-                statusText: res.statusText 
+                statusText: res.statusText
             });
             this.isReady = false;
             clearTimeout(this._connectTimeout);
@@ -86,7 +87,7 @@ export class DeepgramASR {
                     this.onTranscript?.(this._utteranceBuffer.trim());
                     this._utteranceBuffer = '';
                 }
-            } catch {}
+            } catch { }
         });
 
         this.ws.on('close', (code, reason) => {
@@ -109,17 +110,20 @@ export class DeepgramASR {
         const isFinal = msg.is_final;
         const speechFinal = msg.speech_final;
 
-        if (!isFinal) return;
+        if (!isFinal) {
+            this.options.onInterim?.(transcript);
+            return;
+        }
 
         if (speechFinal) {
-            const final = this._utteranceBuffer 
-                ? `${this._utteranceBuffer} ${transcript}`.trim() 
+            const final = this._utteranceBuffer
+                ? `${this._utteranceBuffer} ${transcript}`.trim()
                 : transcript;
             this._utteranceBuffer = '';
             this.onTranscript?.(final);
         } else {
-            this._utteranceBuffer = this._utteranceBuffer 
-                ? `${this._utteranceBuffer} ${transcript}`.trim() 
+            this._utteranceBuffer = this._utteranceBuffer
+                ? `${this._utteranceBuffer} ${transcript}`.trim()
                 : transcript;
         }
     }
@@ -147,7 +151,7 @@ export class DeepgramASR {
         try {
             const buffer = Buffer.from(base64Audio, 'base64');
             this.ws.send(buffer);
-        } catch {}
+        } catch { }
     }
 
     async waitReady() {
