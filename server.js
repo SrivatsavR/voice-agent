@@ -7,13 +7,12 @@ import { DeepgramASR } from './services/deepgram-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 import { getRandomFiller } from './services/silence-filler.js';
+import { generateContextualFiller } from './services/silence-filler-llm.js';
 import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 
-// detect silence after 4s, speak at 5s (1s buffer for "generation")
+// detect silence after 5s
 const SILENCE_FILLER_TIMEOUT_MS = 5000;
-const SILENCE_FILLER_PREP_MS = 4000;
-const SILENCE_FILLER_EXEC_DELAY_MS = 1000;
 
 /**
  * SilenceFillerManager
@@ -29,13 +28,12 @@ class SilenceFillerManager {
   constructor(log) {
     this._log = log.withComponent('SilenceFiller');
     this._timer = null;
-    this._execTimer = null;
     this._tts = null;
     this._callSession = null;
-    this._pendingPhrase = null;
     this._active = false;
   }
 
+  /** Wire up after TTS / callSession are created */
   init(tts, callSession) {
     this._tts = tts;
     this._callSession = callSession;
@@ -43,12 +41,15 @@ class SilenceFillerManager {
     this.reset();
   }
 
+  /** Restart the silence countdown */
   reset() {
     if (!this._active) return;
     this._clearTimers();
-    this._timer = setTimeout(() => this._prepare(), SILENCE_FILLER_PREP_MS);
+    // Trigger LLM generation at exactly 5s
+    this._timer = setTimeout(() => this._trigger(), SILENCE_FILLER_TIMEOUT_MS);
   }
 
+  /** Stop monitoring (call ended) */
   stop() {
     this._active = false;
     this._clearTimers();
@@ -60,46 +61,46 @@ class SilenceFillerManager {
       clearTimeout(this._timer);
       this._timer = null;
     }
-    if (this._execTimer) {
-      clearTimeout(this._execTimer);
-      this._execTimer = null;
-    }
   }
 
-  _prepare() {
+  async _trigger() {
     if (!this._active || !this._tts || !this._callSession) return;
-    // Do not prep if the agent is still speaking
+
+    // 1. Initial check: is the agent currently speaking?
     if (this._tts.isSpeaking) {
       this.reset();
       return;
     }
 
-    const session = this._callSession.getSession();
-    const name = session.preferred_name || session.name_spoken;
-    this._pendingPhrase = getRandomFiller(name);
+    this._log.info('Triggering LLM silence filler...');
 
-    this._log.info('Prepared silence filler phrase at 4s', { phrase: this._pendingPhrase });
+    try {
+      // 2. Fetch current session context for the LLM
+      const session = this._callSession.getSession();
 
-    // Schedule execution at the 5th second (1s later)
-    this._execTimer = setTimeout(() => this._fire(), SILENCE_FILLER_EXEC_DELAY_MS);
-  }
+      // 3. Generate phrase (takes ~500ms-1200ms)
+      const phrase = await generateContextualFiller(session, this._log);
 
-  _fire() {
-    if (!this._active || !this._tts || !this._pendingPhrase) return;
+      // 4. Final safety check: did the agent start speaking OR did the user speak while we were waiting for LLM?
+      // If reset() was called while we were awaiting, the timer state or _active state might have changed.
+      // But we just check if agent is speaking NOW.
+      if (!this._active || this._tts.isSpeaking) {
+        this._log.debug('Aborting filler: agent is now speaking');
+        this.reset();
+        return;
+      }
 
-    // Final check: did agent start speaking in that 1s delay?
-    if (this._tts.isSpeaking) {
+      this._log.info('Firing LLM silence filler phrase', { phrase });
+      this._tts.sendText(phrase);
+      this._tts.flush();
+
+      // Reset for next potential silence gap
       this.reset();
-      return;
+
+    } catch (err) {
+      this._log.error('Failed to trigger LLM filler', err);
+      this.reset();
     }
-
-    const phrase = this._pendingPhrase;
-    this._log.info('Firing silence filler phrase at 5s', { phrase });
-    this._tts.sendText(phrase);
-    this._tts.flush();
-
-    // Reset countdown after filler is sent - it will loop if silence continues
-    this.reset();
   }
 }
 
