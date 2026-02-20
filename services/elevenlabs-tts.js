@@ -149,6 +149,7 @@ export class ElevenLabsTTS {
 
                 if (isCurrent) {
                     this.isReady = false;
+                    this.ws = null; // Ensure this.ws is nullified if it was the current active socket
                     this._stopHeartbeat();
                     this._cancelSpeakingEndTimer();
                     this._markSpeakingEnd(); // Ensure speaking state is cleared
