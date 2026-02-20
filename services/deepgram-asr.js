@@ -3,24 +3,11 @@ import { Logger } from '../utils/logger.js';
 
 /**
  * Manages the WebSocket connection to Deepgram Live Transcription API.
- * Drop-in replacement for ElevenLabsASR.
+ * Drop-in replacement for ElevenLabsASR with 400 error fixes.
  *
  * Feed audio chunks via sendAudio(). Transcripts are delivered via onTranscript callback.
- *
- * KEY DIFFERENCES FROM ELEVENLABS ASR:
- * - Deepgram accepts RAW BINARY audio over WebSocket (not JSON-wrapped base64).
- * - Audio format is specified via query params: encoding=mulaw, sample_rate=8000.
- * - KeepAlive is a JSON message: { "type": "KeepAlive" }
- * - Transcript finality is determined via `is_final` + `speech_final` fields,
- *   and optionally via UtteranceEnd messages.
- * - Uses Nova-3 model for best accuracy and lowest latency.
  */
 export class DeepgramASR {
-    /**
-     * @param {function} onTranscript - Callback for committed transcripts
-     * @param {object} [options]
-     * @param {Logger} [options.logger] - Call-scoped logger
-     */
     constructor(onTranscript, options = {}) {
         this.onTranscript = onTranscript;
         this.ws = null;
@@ -29,207 +16,197 @@ export class DeepgramASR {
         this._reconnectAttempts = 0;
         this._maxReconnectAttempts = 3;
         this._keepaliveInterval = null;
-        this._utteranceBuffer = '';  // Buffer partials within an utterance
+        this._utteranceBuffer = '';
 
         this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
-
         this._connectPromise = this._connect();
     }
 
-    _connect() {
-        return new Promise((resolve) => {
-            if (this._closed) return resolve();
+    async _connect() {
+        if (this._closed) return;
 
-            const apiKey = process.env.DEEPGRAM_API_KEY;
-            if (!apiKey) {
-                this._log.error('DEEPGRAM_API_KEY not set!');
-                return resolve();
+        const apiKey = process.env.DEEPGRAM_API_KEY;
+        if (!apiKey) {
+            this._log.error('DEEPGRAM_API_KEY not set!');
+            return;
+        }
+
+        const params = new URLSearchParams({
+            model: process.env.DEEPGRAM_MODEL || 'nova-2', // Fallback from nova-3
+            encoding: 'mulaw',
+            sample_rate: '8000',
+            channels: '1',
+            punctuate: 'true',
+            interim_results: 'true',
+            endpointing: '200',
+            utterance_end_ms: '500',
+            vad_events: 'true',
+            language: 'en',
+        });
+
+        const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+        this._log.info('Connecting to Deepgram', { 
+            attempt: this._reconnectAttempts + 1, 
+            url: url.substring(0, 100) + '...' 
+        });
+
+        // FIXED: Proper WebSocket options for Deepgram handshake
+        this.ws = new WebSocket(url, [], {
+            timeout: 10000,
+            headers: {
+                'Authorization': `Token ${apiKey}`, // Exact casing required
+                'User-Agent': 'DeepgramNodeClient/1.0'
+            },
+            perMessageDeflate: false,        // Disables compression (400 fix)
+            rejectUnauthorized: false,       // TLS handshake fix for self-signed/staging
+            handshakeTimeout: 10000,
+            protocolVersion: 13             // Explicit WebSocket protocol
+        });
+
+        let resolved = false;
+        const safeResolve = () => { if (!resolved) { resolved = true; } };
+
+        // Connection timeout
+        const timeout = setTimeout(() => {
+            if (!resolved) {
+                this._log.warn('Deepgram connection timeout (10s)');
+                safeResolve();
             }
+        }, 10000);
 
-            // Deepgram Streaming API endpoint with configuration:
-            // - model=nova-3: Latest, fastest, most accurate model
-            // - encoding=mulaw: Twilio sends μ-law encoded audio
-            // - sample_rate=8000: Twilio uses 8kHz sample rate
-            // - channels=1: Mono audio from Twilio
-            // - punctuate=true: Add punctuation to transcripts
-            // - interim_results=true: Get partial results for responsive UX
-            // - endpointing=200: Finalize after 200ms of silence (fast for voice agent)
-            // - utterance_end_ms=500: Send UtteranceEnd event after 500ms silence
-            // - vad_events=true: Get voice activity detection events
-            // - smart_format removed: LLM handles normalization, saves ASR processing time
-            const params = new URLSearchParams({
-                model: 'nova-3',
-                encoding: 'mulaw',
-                sample_rate: '8000',
-                channels: '1',
-                punctuate: 'true',
-                interim_results: 'true',
-                endpointing: '200',
-                utterance_end_ms: '500',
-                vad_events: 'true',
-                language: 'en',
+        this.ws.on('open', () => {
+            this._log.info('Deepgram WebSocket connected');
+            this.isReady = true;
+            this._reconnectAttempts = 0;
+            this._startKeepalive();
+            clearTimeout(timeout);
+            safeResolve();
+        });
+
+        // FIXED: Capture handshake failures
+        this.ws.on('unexpected-response', (request, response) => {
+            this._log.error('Deepgram handshake failed', {
+                status: response.statusCode,
+                statusText: response.statusText,
+                headers: Object.fromEntries(response.headers)
             });
+            this.isReady = false;
+            safeResolve();
+        });
 
-            const url = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+        this.ws.on('message', (data) => {
+            try {
+                const text = Buffer.isBuffer(data) ? data.toString() : data;
+                const response = JSON.parse(text);
+                const msgType = response.type;
 
-            this._log.info('Connecting to Deepgram', { attempt: this._reconnectAttempts + 1 });
-
-            this.ws = new WebSocket(url, {
-                headers: {
-                    'Authorization': `Token ${apiKey}`
-                }
-            });
-
-            let resolved = false;
-            const safeResolve = () => {
-                if (!resolved) { resolved = true; resolve(); }
-            };
-
-            const timeout = setTimeout(() => {
-                if (!resolved) {
-                    this._log.warn('Timed out waiting for Deepgram connection (10s)');
-                    if (this.ws?.readyState === WebSocket.OPEN) {
-                        this.isReady = true;
-                    }
-                    safeResolve();
-                }
-            }, 10000);
-
-            this.ws.on('open', () => {
-                this._log.info('Deepgram WebSocket open');
-                this.isReady = true;
-                this._reconnectAttempts = 0;
-                this._startKeepalive();
-                clearTimeout(timeout);
-                safeResolve();
-            });
-
-            this.ws.on('message', (data) => {
-                try {
-                    const text = Buffer.isBuffer(data) ? data.toString() : data;
-                    const response = JSON.parse(text);
-                    const msgType = response.type;
-
-                    if (msgType === 'Results') {
+                switch (msgType) {
+                    case 'Results':
                         this._handleTranscriptResult(response);
-                    } else if (msgType === 'UtteranceEnd') {
-                        // UtteranceEnd fires when Deepgram detects end of an utterance
-                        // If we have buffered partials, commit them now
+                        break;
+                    case 'UtteranceEnd':
                         if (this._utteranceBuffer.trim() && this.onTranscript) {
-                            this._log.info(`Utterance end (committing buffer): ${this._utteranceBuffer.trim()}`);
+                            this._log.debug(`UtteranceEnd: committing "${this._utteranceBuffer.trim()}"`);
                             this.onTranscript(this._utteranceBuffer.trim());
+                            this._utteranceBuffer = '';
                         }
-                        this._utteranceBuffer = '';
-                    } else if (msgType === 'SpeechStarted') {
-                        this._log.debug('Speech started (VAD)');
-                    } else if (msgType === 'Metadata') {
-                        this._log.info('Metadata received', {
+                        break;
+                    case 'SpeechStarted':
+                        this._log.debug('SpeechStarted (VAD)');
+                        break;
+                    case 'Metadata':
+                        this._log.info('Deepgram metadata', {
                             request_id: response.request_id,
-                            model: response.model_info?.name || 'unknown',
+                            model: response.model_info?.name
                         });
-                    } else if (msgType === 'Error' || response.error) {
-                        this._log.error('Deepgram error', { error: response.error || response.message || response });
-                    } else {
-                        this._log.debug(`Received msg type: ${msgType}`);
+                        break;
+                    case 'Error':
+                        this._log.error('Deepgram API error', { error: response });
+                        break;
+                    default:
+                        this._log.debug(`Deepgram: ${msgType}`);
+                }
+            } catch (err) {
+                // Binary audio or parse error, ignore
+            }
+        });
+
+        this.ws.on('error', (err) => {
+            this._log.error('Deepgram WebSocket error', err);
+            this.isReady = false;
+            this._stopKeepalive();
+            clearTimeout(timeout);
+            safeResolve();
+        });
+
+        this.ws.on('close', (code, reason) => {
+            const reasonStr = reason?.toString() || 'unknown';
+            this._log.info('Deepgram disconnected', { code, reason: reasonStr });
+            this.isReady = false;
+            this._stopKeepalive();
+            clearTimeout(timeout);
+
+            if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
+                this._reconnectAttempts++;
+                const delay = Math.min(1000 * this._reconnectAttempts, 5000);
+                this._log.warn('Reconnecting to Deepgram', { 
+                    delay_ms: delay, 
+                    attempt: this._reconnectAttempts 
+                });
+                setTimeout(() => {
+                    if (!this._closed) {
+                        this._connect();
                     }
-                } catch (err) {
-                    // Not JSON, ignore
-                }
-            });
-
-            this.ws.on('error', (err) => {
-                this._log.error('WebSocket error', err);
-                this.isReady = false;
-                this._stopKeepalive();
-                clearTimeout(timeout);
-                safeResolve();
-            });
-
-            this.ws.on('close', (code, reason) => {
-                const reasonStr = reason ? reason.toString() : '';
-                this._log.info('Disconnected', { code, reason: reasonStr });
-                this.isReady = false;
-                this._stopKeepalive();
-                clearTimeout(timeout);
-
-                if (!this._closed && this._reconnectAttempts < this._maxReconnectAttempts) {
-                    this._reconnectAttempts++;
-                    const delay = Math.min(1000 * this._reconnectAttempts, 5000);
-                    this._log.warn('Reconnecting', { delay_ms: delay, attempt: this._reconnectAttempts, max: this._maxReconnectAttempts });
-                    setTimeout(() => {
-                        if (!this._closed) {
-                            this._connectPromise = this._connect();
-                        }
-                    }, delay);
-                } else if (!this._closed) {
-                    this._log.error('Max reconnect attempts exhausted', { max: this._maxReconnectAttempts });
-                }
-
-                safeResolve();
-            });
+                }, delay);
+            } else if (!this._closed) {
+                this._log.error('Max Deepgram reconnect attempts exhausted');
+            }
+            safeResolve();
         });
     }
 
-    /**
-     * Handle a Deepgram Results message.
-     * 
-     * Deepgram sends results with:
-     * - is_final=true: This channel's result is finalized (won't change)
-     * - speech_final=true: End of a speech segment (endpointing triggered)
-     * 
-     * Strategy:
-     * - On is_final=true with speech_final=true → commit immediately (speaker paused)
-     * - On is_final=true without speech_final → accumulate (speaker still talking)
-     * - Partials (is_final=false) → log only, don't accumulate
-     */
     _handleTranscriptResult(response) {
         const channel = response.channel;
         if (!channel?.alternatives?.length) return;
 
         const alt = channel.alternatives[0];
         const transcript = (alt.transcript || '').trim();
-        const isFinal = response.is_final;
-        const speechFinal = response.speech_final;
-
         if (!transcript) return;
 
+        const isFinal = !!response.is_final;
+        const speechFinal = !!response.speech_final;
+
         if (!isFinal) {
-            // Interim/partial result — just log for debugging
             this._log.debug(`Partial: ${transcript}`);
             return;
         }
 
-        // is_final=true: This segment won't change
         if (speechFinal) {
-            // speech_final=true: The speaker has paused. Commit the full utterance.
-            const fullTranscript = this._utteranceBuffer
-                ? (this._utteranceBuffer + ' ' + transcript).trim()
+            // Commit utterance
+            const fullTranscript = this._utteranceBuffer 
+                ? `${this._utteranceBuffer} ${transcript}`.trim() 
                 : transcript;
             this._utteranceBuffer = '';
-
+            
             if (fullTranscript && this.onTranscript) {
-                this._log.info(`Committed transcript (speech_final): ${fullTranscript}`);
+                this._log.info(`Transcript: ${fullTranscript}`);
                 this.onTranscript(fullTranscript);
             }
         } else {
-            // speech_final=false: Finalized segment, but speaker is still talking.
-            // Accumulate into buffer.
-            this._utteranceBuffer = this._utteranceBuffer
-                ? (this._utteranceBuffer + ' ' + transcript).trim()
+            // Buffer for ongoing speech
+            this._utteranceBuffer = this._utteranceBuffer 
+                ? `${this._utteranceBuffer} ${transcript}`.trim() 
                 : transcript;
-            this._log.debug(`Buffered segment: ${transcript}`, { buffer: this._utteranceBuffer });
+            this._log.debug(`Buffering: ${transcript} (buffer=${this._utteranceBuffer.length} chars)`);
         }
     }
 
-    /**
-     * Send KeepAlive messages to prevent idle timeout.
-     * Deepgram recommends sending KeepAlive every 3-5 seconds during silence.
-     */
     _startKeepalive() {
         this._stopKeepalive();
         this._keepaliveInterval = setInterval(() => {
-            if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
+            if (this.ws?.readyState === WebSocket.OPEN) {
                 this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
+                this._log.debug('Sent KeepAlive');
             }
         }, 5000);
     }
@@ -241,47 +218,44 @@ export class DeepgramASR {
         }
     }
 
-    /**
-     * Send audio to Deepgram ASR.
-     * @param {string} base64Audio - Base64-encoded μ-law 8kHz audio from Twilio
-     * 
-     * IMPORTANT: Deepgram expects RAW BINARY audio, not JSON-wrapped.
-     * We decode the base64 from Twilio and send the raw bytes.
-     */
     sendAudio(base64Audio) {
-        if (this.ws?.readyState === WebSocket.OPEN && this.isReady) {
-            if (!base64Audio) return;
+        if (this.ws?.readyState !== WebSocket.OPEN || !this.isReady) {
+            this._log.debug('Cannot send audio: not ready');
+            return;
+        }
 
-            // Decode base64 to raw binary buffer and send directly
+        if (!base64Audio) return;
+
+        try {
             const audioBuffer = Buffer.from(base64Audio, 'base64');
-            this.ws.send(audioBuffer);
+            this.ws.send(audioBuffer, (err) => {
+                if (err) this._log.error('Audio send failed', err);
+            });
+        } catch (err) {
+            this._log.error('Audio decode/send error', err);
         }
     }
 
     async waitReady() {
         await this._connectPromise;
+        return this.isReady;
     }
 
     close() {
         this._closed = true;
         this.isReady = false;
         this._stopKeepalive();
-        this._log.info('Closing Deepgram connection');
 
-        // Flush any remaining buffered transcript
         if (this._utteranceBuffer.trim() && this.onTranscript) {
-            this._log.info(`Flushing remaining buffer on close: ${this._utteranceBuffer.trim()}`);
             this.onTranscript(this._utteranceBuffer.trim());
             this._utteranceBuffer = '';
         }
 
         if (this.ws?.readyState === WebSocket.OPEN) {
             try {
-                // Send CloseStream message to gracefully close the Deepgram connection
-                // This tells Deepgram to finalize any remaining audio
                 this.ws.send(JSON.stringify({ type: 'CloseStream' }));
-            } catch { }
-            // Give Deepgram a moment to send final results, then close
+            } catch {}
+            
             setTimeout(() => {
                 if (this.ws?.readyState === WebSocket.OPEN) {
                     this.ws.close(1000, 'call_ended');
