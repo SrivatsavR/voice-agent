@@ -23,6 +23,7 @@ export class DeepgramASR {
      */
     constructor(onTranscript, options = {}) {
         this.onTranscript = onTranscript;
+        this.onInterim = options.onInterim || null;
         this.ws = null;
         this.isReady = false;
         this._closed = false;
@@ -196,6 +197,9 @@ export class DeepgramASR {
         if (!isFinal) {
             // Interim/partial result — just log for debugging
             this._log.debug(`Partial: ${transcript}`);
+            if (transcript.length > 0 && this.onInterim) {
+                this.onInterim(transcript);
+            }
             return;
         }
 

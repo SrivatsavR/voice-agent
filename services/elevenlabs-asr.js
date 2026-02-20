@@ -20,6 +20,7 @@ export class ElevenLabsASR {
      */
     constructor(onTranscript, options = {}) {
         this.onTranscript = onTranscript;
+        this.onInterim = options.onInterim || null;
         this.ws = null;
         this.isReady = false;
         this._closed = false;
@@ -99,7 +100,10 @@ export class ElevenLabsASR {
                         }
                     } else if (msgType === 'partial_transcript') {
                         const transcript = (response.transcript || response.text || '').trim();
-                        if (transcript) this._log.debug(`Partial: ${transcript}`);
+                        if (transcript) {
+                            this._log.debug(`Partial: ${transcript}`);
+                            if (this.onInterim) this.onInterim(transcript);
+                        }
                     } else if (msgType === 'error' || response.error) {
                         this._log.error('Server error', { error: response.error || response.message || response });
                     } else {

@@ -106,6 +106,7 @@ export class ElevenLabsTTS {
                                 this._sendToTwilio(response.audio);
                             }
                             if (response.error) this._log.error('Server error', { error: response.error });
+                            // isFinal might not occur on kept-alive streams, but if it does, it's a hard end
                             if (response.isFinal) {
                                 this._log.debug('Generation complete (isFinal) — scheduling speaking-end in 1500ms');
                                 this._scheduleSpeakingEnd();
@@ -180,12 +181,13 @@ export class ElevenLabsTTS {
     }
 
     _markSpeakingStart() {
-        // Cancel any pending end timer — audio is still coming in
-        this._cancelSpeakingEndTimer();
         if (!this._isSpeaking) {
             this._isSpeaking = true;
             try { this._onSpeakingStart(); } catch { }
         }
+        // Always reset the debounce timer when speech chunk is received
+        // This ensures tracking works even if isFinal is never sent by streaming API
+        this._scheduleSpeakingEnd();
     }
 
     _cancelSpeakingEndTimer() {

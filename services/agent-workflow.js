@@ -1,14 +1,14 @@
 import { Agent, Runner, withTrace, tool } from '@openai/agents';
 import {
-    validateEmailTool,
-    normalizeSpokenEmailTool,
-    validateGSTINTool,
-    validatePhoneTool,
-    validatePriceRangeTool
+  validateEmailTool,
+  normalizeSpokenEmailTool,
+  validateGSTINTool,
+  validatePhoneTool,
+  validatePriceRangeTool
 } from '../utils/validators.js';
 
-// ─── ASR Voice Context (injected into every node) ────────────────────────────
-const ASR_VOICE_CONTEXT = `
+// ─── Core Voice Context (injected into every node) ────────────────────────────
+const BASE_VOICE_CONTEXT = `
 IMPORTANT — Voice & ASR Context (apply to every response):
 
 You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho — India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
@@ -19,13 +19,6 @@ The caller's words arrive via ASR (Automatic Speech Recognition). Expect:
 - Partial or cut-off sentences — ask a brief clarifying question rather than guessing.
 - Background noise or garbled words — tolerate minor noise; ask to repeat ONLY if meaning is truly unclear.
 - Hindi-English code-switching — the caller may switch between Hindi and English mid-sentence. Understand both seamlessly and respond in the same language mix they use.
-
-=== NUMBER & DATA INTERPRETATION ===
-- Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
-- Spelled words: "r-o-h-i-t" or "R O H I T" → reconstruct as "rohit".
-- Emails: "at"/"at the rate" → @, "dot" → ., "dash" → -, "underscore" → _.
-- GSTIN: callers often read in slow groups (e.g. "27 ABCDE 1234 F1 Z5"). Remove spaces, uppercase before validating.
-- Phone numbers: may include "+91" or "zero" as prefix — normalize to 10 digits.
 
 === BRAND VOICE & TONE ===
 - Be warm, professional, and conversational — you are a helpful Meesho team member, not a robot.
@@ -38,27 +31,32 @@ The caller's words arrive via ASR (Automatic Speech Recognition). Expect:
 === MEESHO CONTEXT (use when relevant) ===
 - Meesho is India's #1 value e-commerce platform — zero commission, zero penalty.
 - Sellers keep 100% profit. Meesho handles logistics, payments, and returns.
-- 14 Cr+ customers across Tier 2, 3, and 4 cities. Massive demand for affordable products.
-- Top categories: Women's Fashion (kurtis, sarees, dress materials), Men's Fashion, Home & Kitchen, Beauty, Electronics Accessories.
-- Easy onboarding via Meesho Supplier Hub. First order possible within 24–48 hours of listing.
+- Top categories: Women's Fashion, Men's Fashion, Home & Kitchen, Beauty, Electronics Accessories.
+- Easy onboarding via Meesho Supplier Hub.
 
+=== RESPONSE FORMAT ===
+You MUST return ONLY valid JSON — no other text, no wrapping, no markdown fences:
+{
+  "say": "text to speak aloud",
+  "updates": { "key": "value" },
+  "next_node": "TARGET_NODE",
+  "notes": "internal reasoning (never spoken)"
+}
+`;
+
+// ─── Global Guardrails (injected into every conversational node) ──────────────
+const GLOBAL_GUARDRAILS = `
 === GLOBAL GUARDRAILS (mandatory — applies to every node without exception) ===
 
 ── 1. TOPIC FOCUS ──
-You are ONLY permitted to discuss topics directly relevant to Meesho seller onboarding. This includes:
-  • The caller's interest in selling on Meesho
-  • Collecting business details (name, products, price range, switch speed)
-  • Collecting contact & tax details (email, GSTIN, PAN)
-  • Meesho platform benefits, logistics, zero commission policy
-  • Scheduling a callback if the caller is busy
-You MUST NOT engage with, answer, or comment on any topic outside this scope — including but not limited to: personal advice, general e-commerce competitors, news, financial advice, politics, technical support unrelated to onboarding, or any other off-topic subject.
+You are ONLY permitted to discuss topics directly relevant to Meesho seller onboarding. 
+You MUST NOT engage with, answer, or comment on any topic outside this scope.
 
 ── 2. OFF-TOPIC DEFLECTION ──
 If the caller asks or says something outside the permitted scope:
   • Acknowledge politely without repeating or engaging with the off-topic content.
   • Gently redirect to the onboarding purpose.
   • NEVER say you cannot answer — instead, softly steer the conversation back.
-  • Example: "That's a great point! For now, let me focus on getting you set up on Meesho — it will only take a couple of minutes. [Resume current question]."
   • Do NOT stay on the off-topic subject for more than ONE response turn.
 
 ── 3. CONFUSION & APOLOGY ──
@@ -80,24 +78,24 @@ If the caller says they are busy, in a meeting, or asks to be called later — a
 At all times, maintain a warm, respectful, and empathetic tone:
   • Use "ji" as an honorific when addressing the caller by name (e.g., "[name] ji").
   • Thank the caller genuinely for their time and patience.
-  • If the caller expresses frustration, validate their feelings before responding: "I completely understand, and I'm sorry for any inconvenience."
-  • If the caller is hesitant or unsure, be encouraging and supportive — never pushy.
   • Always end interactions — including refusals and callbacks — on a positive, gracious note.
+`;
 
-=== RESPONSE FORMAT ===
-You MUST return ONLY valid JSON — no other text, no wrapping, no markdown fences:
-{
-  "say": "text to speak aloud",
-  "updates": { "key": "value" },
-  "next_node": "TARGET_NODE",
-  "notes": "internal reasoning (never spoken)"
-}
+// ─── Node Specific Contexts ───────────────────────────────────────────────────
+
+const DATA_INTERPRETATION_CONTEXT = `
+=== NUMBER & DATA INTERPRETATION ===
+- Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
+- Spelled words: "r-o-h-i-t" or "R O H I T" → reconstruct as "rohit".
+- Emails: "at"/"at the rate" → @, "dot" → ., "dash" → -, "underscore" → _.
+- GSTIN: callers often read in slow groups (e.g. "27 ABCDE 1234 F1 Z5"). Remove spaces, uppercase before validating.
+- Phone numbers: may include "+91" or "zero" as prefix — normalize to 10 digits.
 `;
 
 // ─── NODE 0: Welcome ──────────────────────────────────────────────────────────
 const welcomeAgent = new Agent({
-    name: "NODE_0_WELCOME",
-    instructions: `${ASR_VOICE_CONTEXT}
+  name: "NODE_0_WELCOME",
+  instructions: `${BASE_VOICE_CONTEXT}
 
 === YOUR TASK ===
 Deliver the welcome greeting exactly as scripted. Do NOT ask any questions. Do NOT engage in conversation.
@@ -110,14 +108,15 @@ Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object {}.
 === IMPORTANT ===
 - Do NOT modify the welcome line. Speak it exactly.
 - Do NOT add extra questions or information.`,
-    model: "gpt-4o",
-    modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true }
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true }
 });
 
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
 const nameInterestAgent = new Agent({
-    name: "NODE_1_NAME_INTEREST",
-    instructions: `${ASR_VOICE_CONTEXT}
+  name: "NODE_1_NAME_INTEREST",
+  instructions: `${BASE_VOICE_CONTEXT}
+${GLOBAL_GUARDRAILS}
 
 === YOUR TASK ===
 You are qualifying a potential Meesho reseller/supplier. Collect their name and gauge interest.
@@ -168,14 +167,16 @@ If the caller expresses concerns, address them briefly:
 - call_outcome: "not_interested" | "wrong_person" | "callback" — only on terminal routing
 
 If the caller refuses to share name → set name_spoken to "Seller" and still proceed with interest pitch.`,
-    model: "gpt-4o",
-    modelSettings: { temperature: 0.4, topP: 1, maxTokens: 512, store: true }
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 512, store: true }
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
 const detailsAgent = new Agent({
-    name: "NODE_2_DETAILS",
-    instructions: `${ASR_VOICE_CONTEXT}
+  name: "NODE_2_DETAILS",
+  instructions: `${BASE_VOICE_CONTEXT}
+${GLOBAL_GUARDRAILS}
+${DATA_INTERPRETATION_CONTEXT}
 
 === YOUR TASK ===
 Collect business details from the prospective Meesho seller. Ask ONE question at a time. Be conversational and encouraging.
@@ -222,15 +223,17 @@ When the caller mentions products, you can share relevant context:
 - price_max: number (in INR)
 - switch_speed_days: number (if convertible to days)
 - switch_speed_bucket: string (if not convertible, e.g. "more than a week")`,
-    model: "gpt-4o",
-    tools: [validatePriceRangeTool],
-    modelSettings: { temperature: 0.4, topP: 1, maxTokens: 768, store: true }
+  model: "gpt-4o-mini",
+  tools: [validatePriceRangeTool],
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 768, store: true }
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
 const contactGstAgent = new Agent({
-    name: "NODE_3_CONTACT_GST",
-    instructions: `${ASR_VOICE_CONTEXT}
+  name: "NODE_3_CONTACT_GST",
+  instructions: `${BASE_VOICE_CONTEXT}
+${GLOBAL_GUARDRAILS}
+${DATA_INTERPRETATION_CONTEXT}
 
 === YOUR TASK ===
 Collect and validate the seller's email address and GSTIN for Meesho Supplier Hub registration. Ask ONE field at a time. Use the provided tools for validation — do NOT attempt to validate formats yourself.
@@ -292,15 +295,16 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - gst_attempts: number (increment on each failed attempt)
 - pan_number: string or null
 - pan_skipped: true or false`,
-    model: "gpt-4o",
-    tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
-    modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true }
+  model: "gpt-4o",
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
+  modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true }
 });
 
 // ─── NODE 4: Closure ──────────────────────────────────────────────────────────
 const closureAgent = new Agent({
-    name: "NODE_4_CLOSURE",
-    instructions: `${ASR_VOICE_CONTEXT}
+  name: "NODE_4_CLOSURE",
+  instructions: `${BASE_VOICE_CONTEXT}
+${GLOBAL_GUARDRAILS}
 
 === YOUR TASK ===
 You are closing the Meesho seller qualification call. Summarize everything collected, get confirmation, handle corrections, and provide clear next steps.
@@ -344,197 +348,237 @@ Set call_outcome: "incomplete" (if email_valid=false or critical fields are miss
 - summary_confirmed: true or false
 - call_outcome: "qualified" | "incomplete"
 - correction_requested: string (which field, if any)`,
-    model: "gpt-4o",
-    modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true }
+  model: "gpt-4o",
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true }
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
 
 const NODE_AGENTS = {
-    NODE_0_WELCOME: welcomeAgent,
-    NODE_1_NAME_INTEREST: nameInterestAgent,
-    NODE_2_DETAILS: detailsAgent,
-    NODE_3_CONTACT_GST: contactGstAgent,
-    NODE_4_CLOSURE: closureAgent,
+  NODE_0_WELCOME: welcomeAgent,
+  NODE_1_NAME_INTEREST: nameInterestAgent,
+  NODE_2_DETAILS: detailsAgent,
+  NODE_3_CONTACT_GST: contactGstAgent,
+  NODE_4_CLOSURE: closureAgent,
 };
 
 export const TERMINAL_NODES = new Set([
-    'TERM_NOT_INTERESTED',
-    'TERM_CALLBACK',
-    'TERM_WRONG_PERSON',
-    'TERM_COMPLETE',
+  'TERM_NOT_INTERESTED',
+  'TERM_CALLBACK',
+  'TERM_WRONG_PERSON',
+  'TERM_COMPLETE',
 ]);
 
 // ─── Default Session State ────────────────────────────────────────────────────
 
 const DEFAULT_SESSION = {
-    caller_phone: '',
-    // Node 1
-    name_spoken: '',
-    preferred_name: '',
-    is_right_person: 'unknown',
-    interest_in_meesho: 'unknown',
-    has_bank_account: '',
-    callback_time: '',
-    // Node 2
-    products_sold: [],
-    price_min: null,
-    price_max: null,
-    switch_speed_days: null,
-    switch_speed_bucket: '',
-    // Node 3
-    email: '',
-    email_valid: false,
-    email_attempts: 0,
-    gstin: '',
-    gstin_valid: false,
-    gst_skipped: false,
-    gst_attempts: 0,
-    pan_number: '',
-    pan_skipped: false,
-    // Node 4
-    summary_confirmed: false,
-    call_outcome: '',
-    correction_requested: '',
-    // Progress flags
-    node0_done: false,
-    node1_done: false,
-    node2_done: false,
-    node3_done: false,
-    node4_done: false,
+  caller_phone: '',
+  // Node 1
+  name_spoken: '',
+  preferred_name: '',
+  is_right_person: 'unknown',
+  interest_in_meesho: 'unknown',
+  has_bank_account: '',
+  callback_time: '',
+  // Node 2
+  products_sold: [],
+  price_min: null,
+  price_max: null,
+  switch_speed_days: null,
+  switch_speed_bucket: '',
+  // Node 3
+  email: '',
+  email_valid: false,
+  email_attempts: 0,
+  gstin: '',
+  gstin_valid: false,
+  gst_skipped: false,
+  gst_attempts: 0,
+  pan_number: '',
+  pan_skipped: false,
+  // Node 4
+  summary_confirmed: false,
+  call_outcome: '',
+  correction_requested: '',
+  // Progress flags
+  node0_done: false,
+  node1_done: false,
+  node2_done: false,
+  node3_done: false,
+  node4_done: false,
 };
 
 // ─── Helper: Parse agent output ───────────────────────────────────────────────
 
 function parseAgentOutput(rawOutput) {
-    if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
+  if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
 
-    let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
+  let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
 
-    // Strip markdown code fences if present (```json ... ```)
-    text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  // Strip markdown code fences if present (```json ... ```)
+  text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
-    try {
-        const parsed = JSON.parse(text);
-        return {
-            say: parsed.say ?? '',
-            updates: (parsed.updates && typeof parsed.updates === 'object') ? parsed.updates : {},
-            next_node: parsed.next_node ?? 'CONTINUE',
-            notes: parsed.notes ?? ''
-        };
-    } catch {
-        console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
-        return { say: String(text), updates: {}, next_node: 'CONTINUE', notes: 'parse_error' };
-    }
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      say: parsed.say ?? '',
+      updates: (parsed.updates && typeof parsed.updates === 'object') ? parsed.updates : {},
+      next_node: parsed.next_node ?? 'CONTINUE',
+      notes: parsed.notes ?? ''
+    };
+  } catch {
+    console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
+    return { say: String(text), updates: {}, next_node: 'CONTINUE', notes: 'parse_error' };
+  }
 }
 
 // ─── Session Factory ──────────────────────────────────────────────────────────
 
 export function createCallSession(callerPhone = '') {
-    const conversationHistory = [];
-    const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
-    let currentNode = 'NODE_0_WELCOME';
+  const conversationHistory = [];
+  const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
+  let currentNode = 'NODE_0_WELCOME';
 
-    const runner = new Runner({
-        traceMetadata: {
-            __trace_source__: "voice-ai-platform",
-            workflow_id: "wf_meesho_reseller_v3"
+  const runner = new Runner({
+    traceMetadata: {
+      __trace_source__: "voice-ai-platform",
+      workflow_id: "wf_meesho_reseller_v3"
+    }
+  });
+
+  // ── Internal runner ─────────────────────────────────────────────────────
+
+  async function runNode(agent, userMessage, onSayChunk) {
+    return await withTrace("Reseller Qualification", async () => {
+      if (userMessage) {
+        conversationHistory.push({
+          role: 'user',
+          content: [{ type: 'input_text', text: userMessage }]
+        });
+      }
+
+      const stream = await runner.run(agent, [...conversationHistory], { stream: true });
+
+      let finalOutputText = "";
+      let sentLength = 0;
+
+      for await (const event of stream) {
+        if (event.type === 'raw_model_stream_event' && event.data.type === 'text_stream') {
+          finalOutputText += event.data.text;
+
+          if (onSayChunk) {
+            // Match the "say" key up to the first unescaped quote
+            const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
+            if (match) {
+              const currentSay = match[1];
+              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+              if (unescaped.length > sentLength) {
+                const chunk = unescaped.substring(sentLength);
+                sentLength = unescaped.length;
+                onSayChunk(chunk);
+              }
+            }
+          }
         }
+      }
+
+      await stream.completed;
+      conversationHistory.push(...stream.newItems.map(item => item.rawItem));
+      return stream.finalOutput;
+    });
+  }
+
+  // ── Mark node as done when leaving it ──────────────────────────────────
+
+  function markNodeDone(nodeName) {
+    const match = nodeName.match(/NODE_(\d)/);
+    if (match) {
+      session[`node${match[1]}_done`] = true;
+    }
+  }
+
+  // ── Public API ──────────────────────────────────────────────────────────
+
+  // Callback to check if stream is still active
+  let isActiveCallback = () => true;
+
+  function setIsActiveCallback(cb) {
+    isActiveCallback = cb;
+  }
+
+  async function getWelcome() {
+    markNodeDone('NODE_0_WELCOME');
+    currentNode = 'NODE_1_NAME_INTEREST';
+    return "Namaste! This is the Meesho Seller Onboarding team calling. We help businesses like yours reach over 14 crore customers across India — with zero commission and free logistics. I'd love to take just a couple of minutes to understand your business. Is this a good time?";
+  }
+
+  async function processTranscript(transcript, tts = null) {
+    if (TERMINAL_NODES.has(currentNode)) {
+      return {
+        say: '',
+        next_node: currentNode,
+        notes: 'Already at terminal node.',
+        session: { ...session }
+      };
+    }
+
+    const agent = NODE_AGENTS[currentNode];
+    if (!agent) {
+      console.error(`[Workflow] No agent found for node: ${currentNode}`);
+      return {
+        say: "Thank you for your time. Have a wonderful day!",
+        next_node: 'TERM_COMPLETE',
+        notes: `Unknown node: ${currentNode}`,
+        session: { ...session }
+      };
+    }
+
+    // Inject session state for closure node
+    let userMessage = transcript;
+    if (currentNode === 'NODE_4_CLOSURE') {
+      userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
+    }
+
+    const raw = await runNode(agent, userMessage, (chunk) => {
+      if (tts && isActiveCallback && isActiveCallback()) {
+        tts.sendText(chunk);
+      }
     });
 
-    // ── Internal runner ─────────────────────────────────────────────────────
+    // We pass the raw object to parseAgentOutput. 
+    // Wait, stream.finalOutput gives the resolved object because the agent uses Zod or text.
+    // Actually, since response is just JSON text, finalOutput might be text.
+    const output = parseAgentOutput(raw);
 
-    async function runNode(agent, userMessage) {
-        return await withTrace("Reseller Qualification", async () => {
-            if (userMessage) {
-                conversationHistory.push({
-                    role: 'user',
-                    content: [{ type: 'input_text', text: userMessage }]
-                });
-            }
-            const result = await runner.run(agent, [...conversationHistory]);
-            conversationHistory.push(...result.newItems.map(item => item.rawItem));
-            return result.finalOutput;
-        });
+    // Merge updates into session
+    if (output.updates && typeof output.updates === 'object') {
+      Object.assign(session, output.updates);
     }
 
-    // ── Mark node as done when leaving it ──────────────────────────────────
+    const prevNode = currentNode;
+    const nextNode = output.next_node === 'CONTINUE' ? currentNode : output.next_node;
 
-    function markNodeDone(nodeName) {
-        const match = nodeName.match(/NODE_(\d)/);
-        if (match) {
-            session[`node${match[1]}_done`] = true;
-        }
+    if (nextNode !== prevNode) {
+      markNodeDone(prevNode);
     }
 
-    // ── Public API ──────────────────────────────────────────────────────────
-
-    async function getWelcome() {
-        const raw = await runNode(welcomeAgent, 'Start the call.');
-        const output = parseAgentOutput(raw);
-        if (output.updates) Object.assign(session, output.updates);
-        markNodeDone('NODE_0_WELCOME');
-        currentNode = output.next_node === 'CONTINUE' ? 'NODE_1_NAME_INTEREST' : output.next_node;
-        return output.say || "Namaste! This is the Meesho Seller Onboarding team calling. We help businesses like yours reach over 14 crore customers across India — with zero commission and free logistics. I'd love to take just a couple of minutes to understand your business. Is this a good time?";
-    }
-
-    async function processTranscript(transcript) {
-        if (TERMINAL_NODES.has(currentNode)) {
-            return {
-                say: '',
-                next_node: currentNode,
-                notes: 'Already at terminal node.',
-                session: { ...session }
-            };
-        }
-
-        const agent = NODE_AGENTS[currentNode];
-        if (!agent) {
-            console.error(`[Workflow] No agent found for node: ${currentNode}`);
-            return {
-                say: "Thank you for your time. Have a wonderful day!",
-                next_node: 'TERM_COMPLETE',
-                notes: `Unknown node: ${currentNode}`,
-                session: { ...session }
-            };
-        }
-
-        // Inject session state for closure node
-        let userMessage = transcript;
-        if (currentNode === 'NODE_4_CLOSURE') {
-            userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
-        }
-
-        const raw = await runNode(agent, userMessage);
-        const output = parseAgentOutput(raw);
-
-        // Merge updates into session
-        if (output.updates && typeof output.updates === 'object') {
-            Object.assign(session, output.updates);
-        }
-
-        const prevNode = currentNode;
-        const nextNode = output.next_node === 'CONTINUE' ? currentNode : output.next_node;
-
-        if (nextNode !== prevNode) {
-            markNodeDone(prevNode);
-        }
-
-        currentNode = nextNode;
-
-        return {
-            say: output.say,
-            next_node: nextNode,
-            notes: output.notes,
-            session: { ...session }
-        };
-    }
+    currentNode = nextNode;
 
     return {
-        getWelcome,
-        processTranscript,
-        getCurrentNode: () => currentNode,
-        getSession: () => ({ ...session }),
-        isTerminal: () => TERMINAL_NODES.has(currentNode),
+      say: output.say,
+      next_node: nextNode,
+      notes: output.notes,
+      session: { ...session }
     };
+  }
+
+  return {
+    getWelcome,
+    processTranscript,
+    setIsActiveCallback,
+    getCurrentNode: () => currentNode,
+    getSession: () => ({ ...session }),
+    isTerminal: () => TERMINAL_NODES.has(currentNode),
+  };
 }

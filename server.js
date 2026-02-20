@@ -352,11 +352,11 @@ wss.on('connection', (ws) => {
         logger: callLog,
         onSpeakingStart: () => {
           interruptionManager.onSpeakingStart();
-          silenceFiller?.reset(); // While agent speaks, hold the silence timer
+          silenceFiller?.pause(); // While agent speaks, hold the silence timer
         },
         onSpeakingEnd: () => {
           interruptionManager.onSpeakingEnd();
-          silenceFiller?.reset(); // Agent finished: restart 5s countdown
+          silenceFiller?.resume(); // Agent finished: restart 5s countdown
         },
       });
 
@@ -388,7 +388,14 @@ wss.on('connection', (ws) => {
 
           callLog.withComponent('User').info(transcript);
           const timer = callLog.withComponent('Workflow').time('processTranscript');
-          const result = await callSession.processTranscript(transcript);
+
+          // Set the active callback so the agent workflow knows if it should abort streaming
+          callSession.setIsActiveCallback(() => {
+            return isActive && myProcessingId === currentProcessingId;
+          });
+
+          // Pass tts so the agent workflow can stream text chunks immediately
+          const result = await callSession.processTranscript(transcript, tts);
           callLog.withComponent('Workflow').timeEnd(timer);
 
           // Guard: if a newer transcript arrived while we were waiting, discard this result
@@ -401,8 +408,10 @@ wss.on('connection', (ws) => {
 
           if (say && tts && isActive) {
             callLog.withComponent('Agent').info(say);
+            // We still send the full say at the end just in case the streaming missed anything
+            // and trigger a flush.
             await tts.sendText(say);
-            tts.flush(); // Flush immediately â€” no setTimeout delay
+            tts.flush();
           }
 
           if (callSession.isTerminal()) {
@@ -437,7 +446,17 @@ wss.on('connection', (ws) => {
       };
 
       // Create ASR based on configured provider
-      const asrOptions = { logger: callLog };
+      const asrOptions = {
+        logger: callLog,
+        // Ultra-fast barge-in: clear audio instantly on first partial transcript!
+        onInterim: (partial) => {
+          if (isActive && tts && tts.isSpeaking && interruptionManager.shouldProcessTranscript(partial)) {
+            callLog.withComponent('User').info(`[Barge-in] Partial: ${partial}`);
+            tts.clearAudio();
+            silenceFiller?.pause();
+          }
+        }
+      };
       if (ASR_PROVIDER === 'deepgram') {
         asr = new DeepgramASR(onTranscript, asrOptions);
       } else {
