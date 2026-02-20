@@ -76,11 +76,11 @@ export class ElevenLabsTTS {
                 this._log.info('WebSocket connected');
 
                 // Initialize with BOS (Beginning of Stream) message
-                // Minimum allowed chunk_length_schedule item is 50
+                // Lower chunk_length_schedule for faster time-to-first-byte (min ~20, sweet spot 30)
                 this.ws.send(JSON.stringify({
                     text: " ",
                     voice_settings: { stability: 0.5, similarity_boost: 0.8 },
-                    generation_config: { chunk_length_schedule: [50] }
+                    generation_config: { chunk_length_schedule: [30] }
                 }));
 
                 this._reconnectAttempts = 0;

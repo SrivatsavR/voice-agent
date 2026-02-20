@@ -53,10 +53,10 @@ export class DeepgramASR {
             // - channels=1: Mono audio from Twilio
             // - punctuate=true: Add punctuation to transcripts
             // - interim_results=true: Get partial results for responsive UX
-            // - endpointing=300: Finalize after 300ms of silence (responsive for voice agent)
-            // - utterance_end_ms=1000: Send UtteranceEnd event after 1s silence
+            // - endpointing=200: Finalize after 200ms of silence (fast for voice agent)
+            // - utterance_end_ms=500: Send UtteranceEnd event after 500ms silence
             // - vad_events=true: Get voice activity detection events
-            // - smart_format=true: Apply smart formatting (numbers, dates, etc.)
+            // - smart_format removed: LLM handles normalization, saves ASR processing time
             const params = new URLSearchParams({
                 model: 'nova-3',
                 encoding: 'mulaw',
@@ -64,10 +64,9 @@ export class DeepgramASR {
                 channels: '1',
                 punctuate: 'true',
                 interim_results: 'true',
-                endpointing: '300',
-                utterance_end_ms: '1000',
+                endpointing: '200',
+                utterance_end_ms: '500',
                 vad_events: 'true',
-                smart_format: 'true',
                 language: 'en',
             });
 

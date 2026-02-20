@@ -181,7 +181,6 @@ wss.on('connection', (ws) => {
   let tts = null;
   let callSession = null;
   let isActive = true;
-  let ignoreAsrUntil = 0;
   let activeStreamSid = null;
   let interruptionManager = null;
 
@@ -222,13 +221,7 @@ wss.on('connection', (ws) => {
       const onTranscript = async (transcript) => {
         try {
           if (!transcript?.trim() || !isActive) return;
-          if (Date.now() < ignoreAsrUntil) {
-            callLog.withComponent('ASR').debug('Echo suppression active, ignoring transcript', {
-              transcript: transcript.substring(0, 60),
-              remaining_ms: ignoreAsrUntil - Date.now(),
-            });
-            return;
-          }
+          // Echo suppression removed, relying on InterruptionManager lifecycle
 
           // Interruption gate check
           if (!interruptionManager.shouldProcessTranscript(transcript)) {
@@ -244,7 +237,7 @@ wss.on('connection', (ws) => {
           if (say && tts && isActive) {
             callLog.withComponent('Agent').info(say);
             tts.sendText(say);
-            setTimeout(() => { if (isActive) tts.flush(); }, 100);
+            tts.flush(); // Flush immediately — no setTimeout delay
           }
 
           if (callSession.isTerminal()) {
@@ -271,21 +264,18 @@ wss.on('connection', (ws) => {
       callSession = createCallSession(callerPhone, { logger: callLog });
 
       try {
-        // Wait for service handshakes
-        const connectTimer = log.time('serviceConnect');
-        await Promise.all([tts.waitReady(), asr.waitReady()]);
-        log.timeEnd(connectTimer);
+        // Parallelize: fire LLM welcome call while ASR/TTS handshakes are in progress
+        const [_, __, welcome] = await Promise.all([
+          tts.waitReady(),
+          asr.waitReady(),
+          callSession.getWelcome()
+        ]);
         log.info('All services ready');
-
-        const welcomeTimer = callLog.withComponent('Workflow').time('getWelcome');
-        const welcome = await callSession.getWelcome();
-        callLog.withComponent('Workflow').timeEnd(welcomeTimer);
         callLog.withComponent('Agent').info(`Welcome: ${welcome}`);
 
         if (tts && isActive) {
-          ignoreAsrUntil = Date.now() + 6000;
           tts.sendText(welcome);
-          setTimeout(() => { if (isActive) tts.flush(); }, 100);
+          tts.flush(); // Flush immediately — no setTimeout delay
         }
       } catch (err) {
         callLog.withComponent('WS').error('Welcome generation error', err);
