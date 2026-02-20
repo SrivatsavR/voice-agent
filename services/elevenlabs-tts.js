@@ -13,7 +13,7 @@ import { Logger } from '../utils/logger.js';
  * - Reconnect support for dropped connections
  * - Proper close sequence (flush → EOS → close)
  */
-const VOICE_ID = '21m00Tcm4TlvDq8ikWAM';
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'UrB5rVw5j9MDZWDZJtOJ';
 const MODEL_ID = 'eleven_flash_v2_5';
 const OUTPUT_FORMAT = 'ulaw_8000';
 
@@ -57,9 +57,10 @@ export class ElevenLabsTTS {
             // max inactivity_timeout = 180s
             const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180`;
 
-            this.ws = new WebSocket(url, {
+            const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
             });
+            this.ws = currentWs;
 
             let resolved = false;
             const safeResolve = () => {
@@ -90,7 +91,9 @@ export class ElevenLabsTTS {
                 safeResolve();
             });
 
-            this.ws.on('message', (data) => {
+            currentWs.on('message', (data) => {
+                if (this.ws !== currentWs) return; // Ignore messages from stale/closed sockets
+
                 try {
                     // ElevenLabs can send audio as raw binary OR as JSON with base64 'audio' field
                     if (Buffer.isBuffer(data)) {
@@ -129,25 +132,32 @@ export class ElevenLabsTTS {
                 }
             });
 
-            this.ws.on('error', (err) => {
-                this._log.error('WebSocket error', err);
-                this.isReady = false;
-                this._stopHeartbeat();
+            currentWs.on('error', (err) => {
+                if (this.ws === currentWs) {
+                    this._log.error('WebSocket error', err);
+                    this.isReady = false;
+                    this._stopHeartbeat();
+                }
                 clearTimeout(timeout);
                 safeResolve();
             });
 
-            this.ws.on('close', (code, reason) => {
+            currentWs.on('close', (code, reason) => {
+                const isCurrent = (this.ws === currentWs);
                 const reasonStr = reason ? reason.toString() : '';
-                this._log.info('WebSocket closed', { code, reason: reasonStr });
-                this.isReady = false;
-                this._stopHeartbeat();
-                this._cancelSpeakingEndTimer();
-                this._markSpeakingEnd(); // Ensure speaking state is cleared
+                this._log.info('WebSocket closed', { code, reason: reasonStr, isCurrent });
+
+                if (isCurrent) {
+                    this.isReady = false;
+                    this._stopHeartbeat();
+                    this._cancelSpeakingEndTimer();
+                    this._markSpeakingEnd(); // Ensure speaking state is cleared
+                }
+
                 clearTimeout(timeout);
 
-                // Auto-reconnect on unexpected close
-                if (!this._closed && code !== 1000 && this._reconnectAttempts < this._maxReconnectAttempts) {
+                // Auto-reconnect on unexpected close (only if it was the current socket)
+                if (isCurrent && !this._closed && code !== 1000 && this._reconnectAttempts < this._maxReconnectAttempts) {
                     this._reconnectAttempts++;
                     const delay = Math.min(1000 * this._reconnectAttempts, 5000);
                     this._log.warn('Reconnecting', { delay_ms: delay, attempt: this._reconnectAttempts, max: this._maxReconnectAttempts });
@@ -208,11 +218,12 @@ export class ElevenLabsTTS {
 
     /**
      * Immediately stop TTS playback by sending a Twilio 'clear' event.
-     * This drains Twilio's audio queue so the caller stops hearing the agent.
-     * Call this when a barge-in is detected.
+     * Also kills the ElevenLabs stream to stop further audio generation.
      */
     clearAudio() {
         this._cancelSpeakingEndTimer();
+
+        // 1. Clear Twilio buffer
         if (this.twilioWs.readyState === WebSocket.OPEN) {
             this._log.info('Sending clear event to Twilio (barge-in)');
             this.twilioWs.send(JSON.stringify({
@@ -220,8 +231,25 @@ export class ElevenLabsTTS {
                 streamSid: this.streamSid,
             }));
         }
-        // Immediately mark as not-speaking so filler/silence logic resets
+
+        // 2. Kill current ElevenLabs stream to stop generation in flight
+        if (this.ws) {
+            this._log.info('Killing ElevenLabs stream connection due to barge-in');
+            const staleWs = this.ws;
+            this.ws = null; // Important: set to null BEFORE closing to avoid handler race
+            this.isReady = false;
+            try {
+                staleWs.close(1000, 'barge_in_interruption');
+            } catch (err) {
+                this._log.error('Error closing ElevenLabs stream', err);
+            }
+        }
+
+        // 3. Reset speaking state
         this._markSpeakingEnd();
+
+        // 4. Pre-connect for the next response in background
+        this._connectPromise = this._connect();
     }
 
     // ── Heartbeat ─────────────────────────────────────────────────────────
@@ -251,7 +279,18 @@ export class ElevenLabsTTS {
         await this._connectPromise;
     }
 
-    sendText(text) {
+    async sendText(text) {
+        if (!text) return;
+
+        // Ensure we have a valid connection
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isReady) {
+            this._log.debug('Socket not ready, waiting/reconnecting...');
+            if (!this._connectPromise) {
+                this._connectPromise = this._connect();
+            }
+            await this._connectPromise;
+        }
+
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
             this.ws.send(JSON.stringify({
@@ -259,7 +298,7 @@ export class ElevenLabsTTS {
                 try_trigger_generation: true
             }));
         } else {
-            this._log.warn('Cannot send text', { ready: this.isReady, wsState: this.ws?.readyState });
+            this._log.warn('Cannot send text after reconnection attempt', { ready: this.isReady, wsState: this.ws?.readyState });
         }
     }
 

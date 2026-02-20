@@ -31,6 +31,7 @@ class SilenceFillerManager {
     this._tts = null;
     this._callSession = null;
     this._active = false;
+    this._paused = false;
   }
 
   /** Wire up after TTS / callSession are created */
@@ -38,12 +39,13 @@ class SilenceFillerManager {
     this._tts = tts;
     this._callSession = callSession;
     this._active = true;
+    this._paused = false;
     this.reset();
   }
 
   /** Restart the silence countdown */
   reset() {
-    if (!this._active) return;
+    if (!this._active || this._paused) return;
     this._clearTimers();
     // Trigger LLM generation at exactly 5s
     this._timer = setTimeout(() => this._trigger(), SILENCE_FILLER_TIMEOUT_MS);
@@ -52,8 +54,25 @@ class SilenceFillerManager {
   /** Stop monitoring (call ended) */
   stop() {
     this._active = false;
+    this._paused = false;
     this._clearTimers();
     this._log.info('Stopped silence filler monitoring');
+  }
+
+  /** Temporarily stop the countdown (e.g. while agent is thinking) */
+  pause() {
+    this._paused = true;
+    this._clearTimers();
+    this._log.debug('Silence filler paused');
+  }
+
+  /** Restart the countdown */
+  resume() {
+    if (this._active) {
+      this._paused = false;
+      this.reset();
+      this._log.debug('Silence filler resumed');
+    }
   }
 
   _clearTimers() {
@@ -82,16 +101,14 @@ class SilenceFillerManager {
       const phrase = await generateContextualFiller(session, this._log);
 
       // 4. Final safety check: did the agent start speaking OR did the user speak while we were waiting for LLM?
-      // If reset() was called while we were awaiting, the timer state or _active state might have changed.
-      // But we just check if agent is speaking NOW.
-      if (!this._active || this._tts.isSpeaking) {
-        this._log.debug('Aborting filler: agent is now speaking');
+      if (!this._active || this._tts.isSpeaking || this._paused) {
+        this._log.debug('Aborting filler: agent is now speaking or processing');
         this.reset();
         return;
       }
 
       this._log.info('Firing LLM silence filler phrase', { phrase });
-      this._tts.sendText(phrase);
+      await this._tts.sendText(phrase);
       this._tts.flush();
 
       // Reset for next potential silence gap
@@ -279,6 +296,7 @@ wss.on('connection', (ws) => {
   let activeStreamSid = null;
   let interruptionManager = null;
   let silenceFiller = null;
+  let currentProcessingId = 0;
 
   // Create call-scoped logger (will get streamSid and callerPhone later)
   let callLog = Logger.forCall(callId, null, null);
@@ -327,17 +345,23 @@ wss.on('connection', (ws) => {
         try {
           if (!transcript?.trim() || !isActive) return;
 
+          const myProcessingId = ++currentProcessingId;
+
           // Reset silence filler whenever the user says anything
           silenceFiller?.reset();
+
+          // Pause silence filler while we think
+          silenceFiller?.pause();
 
           // Interruption gate check
           const wasSpeaking = tts?.isSpeaking;
           if (!interruptionManager.shouldProcessTranscript(transcript)) {
-            return; // Dropped â€” interruptions disabled and agent is speaking
+            silenceFiller?.resume();
+            return; // Dropped — interruptions disabled and agent is speaking
           }
 
           // â”€â”€ Barge-in: user spoke while agent was speaking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-          // Clear Twilio's audio buffer so the caller hears silence immediately
+          // Clear Twilio's audio buffer and ElevenLabs stream immediately
           if (wasSpeaking && tts) {
             tts.clearAudio();
           }
@@ -346,11 +370,18 @@ wss.on('connection', (ws) => {
           const timer = callLog.withComponent('Workflow').time('processTranscript');
           const result = await callSession.processTranscript(transcript);
           callLog.withComponent('Workflow').timeEnd(timer);
+
+          // Guard: if a newer transcript arrived while we were waiting, discard this result
+          if (myProcessingId !== currentProcessingId) {
+            callLog.withComponent('Workflow').warn('Discarding stale result', { myProcessingId, currentProcessingId });
+            return;
+          }
+
           const { say, next_node, session } = result;
 
           if (say && tts && isActive) {
             callLog.withComponent('Agent').info(say);
-            tts.sendText(say);
+            await tts.sendText(say);
             tts.flush(); // Flush immediately â€” no setTimeout delay
           }
 
@@ -375,9 +406,13 @@ wss.on('connection', (ws) => {
             };
 
             closeAfterSpeaking();
+          } else {
+            // Processing done, not terminal: Resume silence filler for next gap
+            silenceFiller?.resume();
           }
         } catch (err) {
           callLog.withComponent('WS').error('ASR callback error', err);
+          silenceFiller?.resume();
         }
       };
 
@@ -402,7 +437,7 @@ wss.on('connection', (ws) => {
         callLog.withComponent('Agent').info(`Welcome: ${welcome}`);
 
         if (tts && isActive) {
-          tts.sendText(welcome);
+          await tts.sendText(welcome);
           tts.flush(); // Flush immediately â€” no setTimeout delay
         }
 
@@ -460,7 +495,7 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   serverLog.info(`Server listening`, {
     port: PORT,
-    buildTag: 'v21-interruptions-filler-fix',
+    buildTag: 'v22-interruptions-filler-overlap-fix',
     asr_provider: ASR_PROVIDER,
     default_interruptions: DEFAULT_INTERRUPTIONS_ENABLED,
     silence_filler_timeout_ms: SILENCE_FILLER_TIMEOUT_MS,
