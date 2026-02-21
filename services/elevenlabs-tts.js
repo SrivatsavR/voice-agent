@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // optimize_streaming_latency=4 is the most aggressive for TTFB
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=4`;
+            // optimize_streaming_latency=2 is a safer balance than 4
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=2`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -91,10 +91,7 @@ export class ElevenLabsTTS {
                 // Initialize with BOS (Beginning of Stream) message
                 this.ws.send(JSON.stringify({
                     text: " ",
-                    voice_settings: voiceSettings,
-                    generation_config: {
-                        chunk_length_schedule: [50]
-                    }
+                    voice_settings: voiceSettings
                 }));
 
                 this._reconnectAttempts = 0;
@@ -333,6 +330,7 @@ export class ElevenLabsTTS {
 
         // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
         const pcmBytes = Buffer.from(audioBase64, 'base64').length;
+        this._log.debug('Sent audio to Twilio', { bytes: pcmBytes, streamSid: this.streamSid });
         const chunkDurationMs = (pcmBytes / 8000) * 1000;
 
         const now = Date.now();
