@@ -117,26 +117,28 @@ export class DeepgramASR {
     }
 
     _handleTranscript(msg) {
-        const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim();
-        if (!transcript) return;
-
+        const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim() || '';
         const isFinal = msg.is_final;
         const speechFinal = msg.speech_final;
 
+        if (!transcript && !speechFinal) return;
+
         if (!isFinal) {
-            this.options.onInterim?.(transcript); // Still immediately calls TTS clearAudio
+            if (transcript) this.options.onInterim?.(transcript); // Still immediately calls TTS clearAudio
             return;
         }
 
         // It is final
-        this._utteranceBuffer = this._utteranceBuffer
-            ? `${this._utteranceBuffer} ${transcript}`.trim()
-            : transcript;
+        if (transcript) {
+            this._utteranceBuffer = this._utteranceBuffer
+                ? `${this._utteranceBuffer} ${transcript}`.trim()
+                : transcript;
+        }
 
         if (speechFinal) {
             // Immediate flush when Deepgram VAD detects end of phrase
             this._forceFlush();
-        } else {
+        } else if (transcript) {
             // Fallback: If no speech_final arrives within 800ms, force flush to prevent hanging
             if (this._flushTimeout) clearTimeout(this._flushTimeout);
             this._flushTimeout = setTimeout(() => this._forceFlush(), 800);
