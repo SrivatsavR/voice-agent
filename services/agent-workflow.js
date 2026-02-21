@@ -612,7 +612,10 @@ export function createCallSession(callerPhone = '', options = {}) {
 
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match) : entry;
           if (options.logger) options.logger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
-          if (tts && isActiveCallback()) tts.sendText(fastMatchResult.say);
+          if (tts && isActiveCallback()) {
+            tts.sendText(fastMatchResult.say);
+            tts.flush();
+          }
           break;
         }
       }

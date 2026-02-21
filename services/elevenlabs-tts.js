@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // optimize_streaming_latency=0 for maximum stability while debugging
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=0`;
+            // optimize_streaming_latency=1 is the sweet spot for stability and TTFB
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=1`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -330,12 +330,7 @@ export class ElevenLabsTTS {
 
         // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
         const pcmBuffer = Buffer.from(audioBase64, 'base64');
-        const pcmBytes = pcmBuffer.length;
-        this._log.debug('Sent audio to Twilio', {
-            bytes: pcmBytes,
-            streamSid: this.streamSid,
-            preview: pcmBuffer.slice(0, 10).toString('hex')
-        });
+        this._log.debug('Sent audio chunk to Twilio', { bytes: pcmBytes });
         const chunkDurationMs = (pcmBytes / 8000) * 1000;
 
         const now = Date.now();
