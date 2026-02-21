@@ -41,7 +41,7 @@ export class DeepgramASR {
             utterance_end_ms: '1000',
             vad_events: 'true',
             smart_format: 'true',
-            language: 'en-IN'
+            language: 'hi'
         });
 
         const url = `wss://api.deepgram.com/v1/listen?${params}`;
