@@ -187,7 +187,8 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [validatePriceRangeTool, normalizeListingDateTool]
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -220,7 +221,8 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool]
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -240,7 +242,8 @@ Conclude the call. Inform them about the WhatsApp link. Answer any questions usi
 - EVERY response must end with a question mark until they are ready to hang up.
 - You do not need to answer immediately, the system will answer if you set kb_query.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [searchKnowledgeBaseTool]
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
@@ -525,104 +528,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     let output = parseAgentOutput(raw);
     let finalOutput = output;
 
-    // --- Native External Validation Loop ---
-    let needsReRun = false;
-    let systemInjection = "";
-
-    try {
-      if (output.updates && output.updates.raw_email) {
-        const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: output.updates.raw_email });
-        const norm = JSON.parse(normStr);
-        const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
-        const val = JSON.parse(valStr);
-        if (val.valid) {
-          output.updates.email = val.normalized;
-          output.updates.email_valid = true;
-          systemInjection = `[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`;
-        } else {
-          session.email_attempts = (session.email_attempts || 0) + 1;
-          output.updates.email_attempts = session.email_attempts;
-          systemInjection = `[SYSTEM: Verification failed. Email invalid: ${val.error}. Ask for email again.]`;
-        }
-        delete output.updates.raw_email;
-        needsReRun = true;
-      }
-
-      if (output.updates && output.updates.raw_gstin) {
-        const valStr = await validateGSTINTool.execute({ gstin: output.updates.raw_gstin });
-        const val = JSON.parse(valStr);
-        if (val.valid) {
-          output.updates.gstin = val.normalized;
-          output.updates.gstin_valid = true;
-          systemInjection = `[SYSTEM: Verification done. GSTIN is valid. Move to next field.]`;
-        } else {
-          session.gst_attempts = (session.gst_attempts || 0) + 1;
-          output.updates.gst_attempts = session.gst_attempts;
-          systemInjection = `[SYSTEM: Verification failed. You MUST repeat the GST the user provided (${val.normalized}) and highlight that it is invalid: ${val.error}. Ask for GSTIN again.]`;
-        }
-        delete output.updates.raw_gstin;
-        needsReRun = true;
-      }
-
-      if (output.updates && output.updates.raw_price_min !== undefined && output.updates.raw_price_max !== undefined) {
-        const valStr = await validatePriceRangeTool.execute({ price_min: output.updates.raw_price_min, price_max: output.updates.raw_price_max });
-        const val = JSON.parse(valStr);
-        if (val.valid) {
-          output.updates.price_min = val.price_min;
-          output.updates.price_max = val.price_max;
-          systemInjection = val.swapped ? `[SYSTEM: Prices swapped. Confirm with user: ${val.note}]` : `[SYSTEM: Price valid. Move to next.]`;
-        } else {
-          systemInjection = `[SYSTEM: Price invalid: ${val.error}. Ask again.]`;
-        }
-        delete output.updates.raw_price_min;
-        delete output.updates.raw_price_max;
-        needsReRun = true;
-      }
-
-      if (output.updates && output.updates.raw_listing_start) {
-        const valStr = await normalizeListingDateTool.execute({ spoken_date: output.updates.raw_listing_start, current_date_iso: new Date().toISOString().split('T')[0] });
-        const val = JSON.parse(valStr);
-        if (val.valid) {
-          output.updates.listing_start = val.normalized;
-        }
-        delete output.updates.raw_listing_start;
-      }
-
-      if (output.updates && output.updates.kb_query) {
-        const valStr = await searchKnowledgeBaseTool.execute({ query: output.updates.kb_query });
-        const val = JSON.parse(valStr);
-        systemInjection = `[SYSTEM: Knowledge Base Answer: ${val.answer}]`;
-        delete output.updates.kb_query;
-        needsReRun = true;
-      }
-    } catch (e) {
-      if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
-    }
-
     if (output.updates && typeof output.updates === 'object') {
       Object.assign(session, output.updates);
     }
-
-    if (needsReRun && systemInjection && isActiveCallback && isActiveCallback()) {
-      ttsBuffer = "";
-      const raw2 = await Logger.runWithContext(options.logger?.context || {}, async () => {
-        return await runNode(agent, systemInjection, streamCallback);
-      });
-
-      if (ttsBuffer.trim() && tts && isActiveCallback && isActiveCallback()) {
-        tts.sendText(ttsBuffer);
-        ttsBuffer = "";
-      }
-
-      const output2 = parseAgentOutput(raw2);
-      if (output2.updates && typeof output2.updates === 'object') {
-        Object.assign(session, output2.updates);
-      }
-
-      finalOutput = output2;
-      finalOutput.say = (output.say + " " + output2.say).trim();
-    }
-    // --- End External Validation Loop ---
 
     const outputToUse = finalOutput;
 
