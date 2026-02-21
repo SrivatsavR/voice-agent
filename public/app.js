@@ -300,4 +300,5 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // Start
 startNewSession();
+pollLogs();
 setInterval(refreshHistory, 3000);
