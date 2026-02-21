@@ -42,6 +42,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. Treat this as affirmative interest and move to your next missing field (Name, Bank Account, etc.).
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -483,7 +484,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye)$/i,
         updates: { interest_in_meesho: 'yes' },
         say: "Badiya! Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai.",
         next_node: 'CONTINUE'

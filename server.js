@@ -21,8 +21,8 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// detect silence after 7s
-const SILENCE_FILLER_TIMEOUT_MS = 7000;
+// detect silence after 10s
+const SILENCE_FILLER_TIMEOUT_MS = 10000;
 
 /**
  * SilenceFillerManager
@@ -108,7 +108,7 @@ class SilenceFillerManager {
       const name = this._callSession?.getSession()?.preferred_name || '';
       const phrase = name ? `Hello ${name}, kya aap mujhe sun pa rahe hain?` : `Hello, kya aap mujhe sun pa rahe hain?`;
 
-      this._log.info('Firing silence filler phrase at 7s', { phrase });
+      this._log.info(`Firing silence filler phrase at ${SILENCE_FILLER_TIMEOUT_MS / 1000}s`, { phrase });
       this._tts.sendText(phrase);
       this._tts.flush();
     } else {
@@ -708,8 +708,9 @@ wss.on('connection', (ws) => {
       log.info('Stop command from Twilio', { stopStreamSid, activeStreamSid });
 
       if (stopStreamSid === activeStreamSid || stopStreamSid === 'unknown') {
-        log.info('Stop received â€” marking inactive, waiting for WS close');
+        log.info('Stop received — marking inactive, waiting for WS close');
         isActive = false;
+        silenceFiller?.stop();
       } else {
         log.debug('Stop is for a different stream â€” ignoring');
       }
@@ -742,7 +743,7 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   serverLog.info(`Server listening`, {
     port: PORT,
-    buildTag: 'v25-stability-queue-fix',
+    buildTag: 'v26-filler-stop-fix',
     asr_provider: ASR_PROVIDER,
     default_interruptions: DEFAULT_INTERRUPTIONS_ENABLED,
     silence_filler_timeout_ms: SILENCE_FILLER_TIMEOUT_MS,
