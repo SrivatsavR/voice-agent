@@ -106,7 +106,7 @@ const welcomeAgent = new Agent({
 Deliver the welcome greeting exactly as scripted. Do NOT ask any questions. Do NOT engage in conversation.
 
 Say verbatim:
-"Namaste! This is the Meesho Seller Onboarding team calling. We help businesses like yours reach over 14 crore customers across India — with zero commission and free logistics. I'd love to take just a couple of minutes to understand your business. Is this a good time?"
+"Hello I am Asmita calling from the Meesho seller onboarding team."
 
 Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object {}.
 
@@ -520,7 +520,7 @@ export function createCallSession(callerPhone = '') {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! This is the Meesho Seller Onboarding team calling. We help businesses like yours reach over 14 crore customers across India — with zero commission and free logistics. I'd love to take just a couple of minutes to understand your business. Is this a good time?";
+    return "Hello I am Asmita calling from the Meesho seller onboarding team.";
   }
 
   async function processTranscript(transcript, tts = null) {
