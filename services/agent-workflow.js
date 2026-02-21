@@ -100,7 +100,7 @@ const welcomeAgent = new Agent({
   Deliver the welcome greeting exactly as scripted.Do NOT ask any questions.Do NOT engage in conversation.
 
 Say verbatim:
-"Hello I am Asmita calling from the Meesho seller onboarding team."
+"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon."
 
 Set next_node to "NODE_1_NAME_INTEREST".Leave updates as empty object { }.
 
@@ -123,7 +123,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Aapka naam kya hai?"
 2. **Interest**: Once name is known, ask: "Ji [name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
-3. **Bank Account**: If interested, ask: "Zaroor! Kya aapke paas active bank account hai? Payment ke liye zaroori hai."
+3. **Bank Account**: If interested, ask: "Zaroor! Kya aapke paas active bank account hai? Payment ke liye ye zaroori hai."
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -406,7 +406,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Hello I am Asmita calling from the Meesho seller onboarding team.";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
   }
 
   async function processTranscript(transcript, tts = null) {
