@@ -655,6 +655,12 @@ wss.on('connection', (ws) => {
             tts.clearAudio();
             silenceFiller?.pause();
           }
+        },
+        onSpeechStarted: () => {
+          if (isActive && tts && !tts.isSpeaking) {
+            // Warm up TTS engine as soon as human starts speaking
+            tts.sendText(" ");
+          }
         }
       };
       if (ASR_PROVIDER === 'deepgram') {

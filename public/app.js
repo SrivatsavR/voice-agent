@@ -138,9 +138,9 @@ function updateVariables(session) {
     const targets = [
         { key: 'name_spoken', label: 'Name', icon: 'user' },
         { key: 'interest_in_meesho', label: 'Interest', icon: 'check-circle' },
-        { key: 'has_bank_account', label: 'Bank', icon: 'credit-card' },
+        { key: 'has_bank_account', label: 'Bank Account?', icon: 'credit-card' },
         { key: 'products_sold', label: 'Category', icon: 'package' },
-        { key: 'listing_start', label: 'Ready', icon: 'calendar' },
+        { key: 'listing_start', label: 'Ready By', icon: 'calendar' },
         { key: 'email', label: 'Email', icon: 'mail' },
         { key: 'gstin', label: 'GST', icon: 'shield-check' }
     ];

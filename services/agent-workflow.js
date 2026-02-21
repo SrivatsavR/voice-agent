@@ -53,14 +53,16 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === RESPONSE FORMAT ===
-Strictly return JSON matching the strict schema. "say" must be FIRST.
-The "updates_json" field MUST be a stringified JSON object, containing values to update.
+Strictly return JSON.
 {
   "say": "Short crisp Hindi/Hinglish question?",
   "updates_json": "{\"key\": \"value\"}",
   "next_node": "TARGET_NODE_NAME",
-  "notes": "Internal reasoning"
+  "notes": "1-word status"
 }
+- "say" field MUST be the first key.
+- Keep "notes" to exactly one word.
+- Capture updates only for MISSING data.
 `;
 
 const RESPONSE_SCHEMA = {
@@ -463,154 +465,239 @@ export function createCallSession(callerPhone = '', options = {}) {
     return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
   }
 
+  // --- Regex Fast-Path Configuration ---
+  const FAST_MATCH_CONFIG = {
+    'NODE_1_NAME_INTEREST': [
+      {
+        pattern: /^(mera naam|my name is|main|i am|this is) (.*?)(?: hai| hoon)?$/i,
+        handle: (match) => {
+          const name = match[2].trim();
+          return {
+            updates: { name_spoken: name },
+            say: `Achha, ${name} ji. Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?`,
+            next_node: 'CONTINUE'
+          };
+        }
+      },
+      {
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
+        updates: { interest_in_meesho: 'yes' },
+        say: "Badiya! Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai.",
+        next_node: 'NODE_2_BUSINESS_DETAILS'
+      },
+      {
+        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi)$/i,
+        updates: { interest_in_meesho: 'no' },
+        say: "Achha, koi baat nahi. Agar aapka mann badle toh humein zaroor batayiye. Dhanyavad!",
+        next_node: 'TERM_COMPLETE'
+      }
+    ],
+    'NODE_2_BUSINESS_DETAILS': [
+      {
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
+        updates: { has_bank_account: 'yes' },
+        say: "Achha, toh bank account hai. Aap kis tarah ke products bechte hain?",
+        next_node: 'CONTINUE'
+      }
+    ],
+    'NODE_3_GST_DETAILS': [
+      {
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
+        updates: { has_gst_number: 'yes' },
+        say: "Sunke khushi hui! Aapka 15-digit ka GST number kya hai?",
+        next_node: 'CONTINUE'
+      }
+    ]
+  };
+
   async function processTranscript(transcript, tts = null, silenceFiller = null) {
-    if (TERMINAL_NODES.has(currentNode)) {
-      return {
-        say: '',
-        next_node: currentNode,
-        notes: 'Already at terminal node.',
-        session: { ...session }
-      };
+    const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!]/g, '');
+    let fastMatchResult = null;
+
+    // --- Helpers ---
+    const runTool = async (toolObj, params) => {
+      if (toolObj.execute) return await toolObj.execute(params);
+      if (typeof toolObj === 'function') return await toolObj(params);
+      throw new Error('Tool object is not executable');
+    };
+
+    const handleBackgroundTasks = (output) => {
+      if (!output || !output.updates) return;
+      const updates = output.updates;
+
+      // 1. Email
+      if (updates.raw_email && !session.bg_email_running) {
+        session.bg_email_running = true;
+        const candidate = updates.raw_email;
+        delete session.raw_email; // Prevent double trigger
+        Promise.resolve().then(async () => {
+          try {
+            if (silenceFiller) silenceFiller.pause();
+            const normStr = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+            const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
+            const valStr = await runTool(validateEmailTool, { email: norm.normalized_email });
+            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
+            if (val?.valid) {
+              session.email = val.normalized;
+              session.email_valid = true;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').info('Email Validated');
+                await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts, silenceFiller);
+              }
+            } else {
+              session.email_attempts = (session.email_attempts || 0) + 1;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').warn('Email Invalid', val);
+                await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
+              }
+            }
+          } catch (e) { console.error(e); } finally {
+            session.bg_email_running = false;
+            if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
+          }
+        });
+      }
+      // 2. GST
+      if (updates.raw_gstin && !session.bg_gst_running) {
+        session.bg_gst_running = true;
+        const candidate = updates.raw_gstin;
+        delete session.raw_gstin;
+        Promise.resolve().then(async () => {
+          try {
+            if (silenceFiller) silenceFiller.pause();
+            const valStr = await runTool(validateGSTINTool, { gstin: candidate });
+            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
+            if (val?.valid) {
+              session.gstin = val.normalized;
+              session.gstin_valid = true;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').info('GST Validated');
+                await processTranscript(`[SYSTEM: Verification done. GSTIN ${val.normalized} is valid. Move to closure.]`, tts, silenceFiller);
+              }
+            } else {
+              session.gst_attempts = (session.gst_attempts || 0) + 1;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').warn('GST Invalid', val);
+                await processTranscript(`[SYSTEM: Verification failed. GSTIN invalid: ${val ? val.error : 'unknown error'}. Be helpful.]`, tts, silenceFiller);
+              }
+            }
+          } catch (e) { console.error(e); } finally {
+            session.bg_gst_running = false;
+            if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
+          }
+        });
+      }
+      // 3. KB
+      if (updates.kb_query) {
+        const query = updates.kb_query;
+        Promise.resolve().then(async () => {
+          try {
+            const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+            if (isActiveCallback()) {
+              if (options.logger) options.logger.info(`[KnowledgeBase] Answer: ${query}`);
+              await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
+            }
+          } catch (e) { console.error(e); }
+        });
+      }
+    };
+
+    // 1. Check Fast-Match Regex (Speed Path)
+    if (FAST_MATCH_CONFIG[currentNode]) {
+      for (const entry of FAST_MATCH_CONFIG[currentNode]) {
+        const match = cleanTranscript.match(entry.pattern);
+        if (match) {
+          // Rule: Never end conversation based on regex
+          if (entry.next_node && entry.next_node.startsWith('TERM_')) continue;
+
+          fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match) : entry;
+          if (options.logger) options.logger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
+          if (tts && isActiveCallback()) tts.sendText(fastMatchResult.say);
+          break;
+        }
+      }
     }
 
+    // 2. Start LLM (Ground Truth Path) in Parallel
     const agent = NODE_AGENTS[currentNode];
-    if (!agent) {
-      console.error(`[Workflow] No agent found for node: ${currentNode} `);
-      return {
-        say: "Thank you for your time. Have a wonderful day!",
-        next_node: 'TERM_COMPLETE',
-        notes: `Unknown node: ${currentNode} `,
-        session: { ...session }
-      };
-    }
+    if (!agent) return { say: "Goodbye", next_node: 'TERM_COMPLETE', session: { ...session } };
 
-    // Inject session state for all conversational nodes
     let userMessage = transcript;
     if (currentNode !== 'NODE_0_WELCOME') {
-      const sessionSummary = { ...session };
-      delete sessionSummary.caller_phone;
-
-      // Filter out empty/null values to keep context concise
-      const activeData = Object.fromEntries(
-        Object.entries(sessionSummary).filter(([_, v]) =>
-          v !== '' && v !== null && v !== 0 && v !== false &&
-          (Array.isArray(v) ? v.length > 0 : true)
-        )
-      );
-
-      const today = new Date().toISOString().split('T')[0];
-      userMessage = `${transcript}\n\n[SYSTEM: Date: ${today}, Session: ${JSON.stringify(activeData)}]`;
+      const activeData = Object.fromEntries(Object.entries(session).filter(([k, v]) => k !== 'caller_phone' && v !== '' && v !== null && v !== 0 && (Array.isArray(v) ? v.length > 0 : true)));
+      userMessage = `${transcript}\n\n[SYSTEM: Date: ${new Date().toISOString().split('T')[0]}, Session: ${JSON.stringify(activeData)}]`;
     }
 
-    let hasStreamed = false;
-    let ttsBuffer = "";
-    const sentenceRegex = /[.,?!|।]/;
-
-    const streamCallback = (chunk) => {
-      if (tts && isActiveCallback && isActiveCallback()) {
-        hasStreamed = true;
-        ttsBuffer += chunk;
-        if (sentenceRegex.test(ttsBuffer)) {
-          const match = ttsBuffer.match(/.*?[.,?!|।]/);
-          if (match) {
-            const toSend = match[0];
-            tts.sendText(toSend);
-            ttsBuffer = ttsBuffer.substring(toSend.length);
-          }
-        }
-      }
-    };
-
-    let raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
-      return await runNode(agent, userMessage, streamCallback);
-    });
-
-    if (ttsBuffer.trim() && tts && isActiveCallback && isActiveCallback()) {
-      tts.sendText(ttsBuffer);
-      ttsBuffer = "";
-    }
-
-    let output = parseAgentOutput(raw);
-    let finalOutput = output;
-
-    if (output.updates && typeof output.updates === 'object') {
-      Object.assign(session, output.updates);
-    }
-
-    // --- Email Background Verification (GST moved to direct capture) ---
-
-    if (output.updates && output.updates.raw_email && !session.bg_email_running) {
-      session.bg_email_running = true;
-      const candidate = output.updates.raw_email;
-      delete session.raw_email;
-
-      Promise.resolve().then(async () => {
-        try {
-          if (silenceFiller) silenceFiller.pause();
-          const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: candidate });
-          const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
-
-          const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
-          const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-          if (val && val.valid) {
-            session.email = val.normalized;
-            session.email_valid = true;
-            if (isActiveCallback && isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('Email Validated in background');
-              await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts, silenceFiller);
+    const llmPromise = (async () => {
+      try {
+        let ttsBuffer = "";
+        const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
+          return await runNode(agent, userMessage, (chunk) => {
+            if (!fastMatchResult && tts && isActiveCallback()) {
+              ttsBuffer += chunk;
+              if (/[.,?!|।, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
+                const bIdx = ttsBuffer.search(/[.,?!|।,]/) + 1 || ttsBuffer.length;
+                if (bIdx > 0 || ttsBuffer.split(/\s+/).length >= 6) {
+                  const toSendArr = ttsBuffer.substring(0, bIdx || ttsBuffer.length);
+                  tts.sendText(toSendArr);
+                  ttsBuffer = ttsBuffer.substring(bIdx || ttsBuffer.length);
+                }
+              }
             }
-          } else {
-            session.email_attempts = (session.email_attempts || 0) + 1;
-            if (isActiveCallback && isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').warn('Email Invalid in background', val);
-              await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
-            }
+          });
+        });
+        if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) tts.sendText(ttsBuffer);
+        return parseAgentOutput(raw);
+      } catch (e) { return null; }
+    })();
+
+    // 3. Race Resolution
+    if (fastMatchResult) {
+      llmPromise.then(async (actual) => {
+        if (!actual) return;
+        handleBackgroundTasks(actual);
+
+        // Verification: Regex positive vs LLM negative/terminal
+        const predY = (fastMatchResult.updates?.interest_in_meesho === 'yes' || fastMatchResult.updates?.has_bank_account === 'yes');
+        const actN = (actual.updates?.interest_in_meesho === 'no' || actual.updates?.has_bank_account === 'no');
+        const termC = (actual.next_node && actual.next_node.startsWith('TERM_'));
+
+        // Name check
+        const nameMismatch = fastMatchResult.updates?.name_spoken && actual.updates?.name_spoken && fastMatchResult.updates.name_spoken !== actual.updates.name_spoken;
+
+        if ((predY && actN) || termC || nameMismatch) {
+          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}`);
+          if (isActiveCallback()) {
+            tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
+            Object.assign(session, actual.updates);
+            currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
-        } catch (e) {
-          if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
-        } finally {
-          session.bg_email_running = false;
-          if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
+        } else {
+          Object.assign(session, actual.updates);
         }
       });
+
+      const nextNode = fastMatchResult.next_node === 'CONTINUE' ? currentNode : fastMatchResult.next_node;
+      if (nextNode !== currentNode) markNodeDone(currentNode);
+      currentNode = nextNode;
+      Object.assign(session, fastMatchResult.updates);
+
+      return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
     }
-    // --- End Background Verification ---
 
-    const outputToUse = finalOutput;
+    // Standard Path
+    const finalLLMOutput = await llmPromise;
+    if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session } };
 
-    // Fire-and-forget DB save
-    Promise.resolve().then(() => {
-      const hasUpdates = outputToUse.updates && Object.keys(outputToUse.updates).length > 0;
-      const hasNotes = outputToUse.notes && outputToUse.notes !== '' && outputToUse.notes !== 'parse_error';
-
-      if (hasUpdates || hasNotes) {
-        if (options.logger) {
-          options.logger.withComponent('Database').info('Saving session updates', {
-            updates: outputToUse.updates,
-            notes: outputToUse.notes
-          });
-        }
-      }
-    }).catch(err => {
-      if (options.logger) options.logger.withComponent('Database').error('Error saving to DB', err);
-    });
+    if (finalLLMOutput.updates) Object.assign(session, finalLLMOutput.updates);
+    handleBackgroundTasks(finalLLMOutput);
 
     const prevNode = currentNode;
-    const nextNode = outputToUse.next_node === 'CONTINUE' ? currentNode : outputToUse.next_node;
-
-    if (nextNode !== prevNode) {
-      markNodeDone(prevNode);
-    }
-
+    const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+    if (nextNode !== prevNode) markNodeDone(prevNode);
     currentNode = nextNode;
 
-    return {
-      say: outputToUse.say,
-      next_node: nextNode,
-      notes: outputToUse.notes,
-      session: { ...session },
-      streamedByNode: hasStreamed
-    };
+    return { say: finalLLMOutput.say, next_node: nextNode, notes: finalLLMOutput.notes, session: { ...session }, streamedByNode: true };
   }
 
   return {

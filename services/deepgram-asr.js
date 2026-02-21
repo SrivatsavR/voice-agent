@@ -51,7 +51,7 @@ export class DeepgramASR {
             channels: '1',
             punctuate: 'true',
             interim_results: 'true',
-            endpointing: '700',
+            endpointing: '500',
             utterance_end_ms: '2000',
             vad_events: 'true',
             smart_format: 'true',
@@ -100,6 +100,8 @@ export class DeepgramASR {
                 const msg = JSON.parse(data.toString());
                 if (msg.type === 'Results') {
                     this._handleTranscript(msg);
+                } else if (msg.type === 'SpeechStarted') {
+                    this.options.onSpeechStarted?.();
                 } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
                     // Ignore Deepgram's native utterance end to strictly enforce 5s voice inactivity flush
                 }

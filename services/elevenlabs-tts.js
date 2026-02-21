@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // max inactivity_timeout = 180s, optimize_streaming_latency=3 drops lookahead for faster TTFB
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=3`;
+            // optimize_streaming_latency=4 is the most aggressive for TTFB
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=4`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -68,11 +68,11 @@ export class ElevenLabsTTS {
                 if (!resolved) { resolved = true; resolve(); }
             };
 
-            // Timeout: resolve after 10s even if not connected
+            // Timeout: resolve after 5s for faster fallback
             const timeout = setTimeout(() => {
-                this._log.warn('Connection timed out after 10s');
+                this._log.warn('Connection timed out after 5s');
                 safeResolve();
-            }, 10000);
+            }, 5000);
 
             this.ws.on('open', () => {
                 this.isReady = true;
