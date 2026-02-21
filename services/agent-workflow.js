@@ -142,8 +142,8 @@ ${GLOBAL_GUARDRAILS}
 Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
 
 === QUESTION FLOW ===
-1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Main jaan sakti hoon aapka naam kya hai?"
-2. **Interest**: Once name is known, ask: "Ji [name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
+1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Aapka naam kya hai?"
+2. **Interest**: Once name is known, ask: "[name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
 3. **Bank Account**: If interested, ask: "Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai."
 
 === INTENT DETECTION ===
@@ -208,8 +208,8 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | 1. Say "Ek minute, main verify kar leti hoon." 2. Set 'raw_email' in 'updates_json'. |
-| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main verify kar leti hoon." 2. Set 'raw_gstin' in 'updates_json'. |
+| GIVING_EMAIL | user provides email | 1. Say "Ek minute, main aapka email verify kar leti hoon." 2. Set 'raw_email' in 'updates_json'. |
+| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main aapka GST verify kar leti hoon." 2. Set 'raw_gstin' in 'updates_json'. |
 | NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
 | GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
