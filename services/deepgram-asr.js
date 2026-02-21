@@ -129,6 +129,10 @@ export class DeepgramASR {
         }
     }
 
+    forceFlush() {
+        this._forceFlush();
+    }
+
     _handleTranscript(msg) {
         const transcript = msg.channel?.alternatives?.[0]?.transcript?.trim() || '';
         const isFinal = msg.is_final;

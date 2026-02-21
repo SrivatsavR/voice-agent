@@ -615,7 +615,8 @@ wss.on('connection', (ws) => {
               const match = cleaned.match(gstinRegex);
               if (match) {
                 callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found GSTIN: ${match[0]}`);
-                asr?.close(); // Immediately force the utterance to end and trigger onTranscript
+                if (asr?.forceFlush) asr.forceFlush();
+                else if (asr?._forceFlush) asr._forceFlush(); // Fallback
                 return;
               }
             }
@@ -624,7 +625,8 @@ wss.on('connection', (ws) => {
               const lc = partial.toLowerCase();
               if ((lc.includes('@') || lc.includes(' at ')) && (lc.includes('.com') || lc.includes(' dot '))) {
                 callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found Email pattern`);
-                asr?.close(); // Immediately force the utterance to end and trigger onTranscript
+                if (asr?.forceFlush) asr.forceFlush();
+                else if (asr?._forceFlush) asr._forceFlush(); // Fallback
                 return;
               }
             }
