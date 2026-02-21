@@ -444,7 +444,7 @@ function parseAgentOutput(rawOutput) {
 
 // ─── Session Factory ──────────────────────────────────────────────────────────
 
-export function createCallSession(callerPhone = '') {
+export function createCallSession(callerPhone = '', options = {}) {
   const conversationHistory = [];
   const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
   let currentNode = 'NODE_0_WELCOME';
@@ -576,8 +576,8 @@ export function createCallSession(callerPhone = '') {
       if (hasUpdates || hasNotes) {
         // Here we simulate an async DB call that does not block the workflow
         // In a real implementation this would be e.g., await db.collection('calls').updateOne(...)
-        if (callSession.logger) {
-          callSession.logger.withComponent('Database').info('Saving session updates and notes asynchronously', {
+        if (options.logger) {
+          options.logger.withComponent('Database').info('Saving session updates and notes asynchronously', {
             updates: output.updates,
             notes: output.notes
           });
@@ -586,8 +586,8 @@ export function createCallSession(callerPhone = '') {
         }
       }
     }).catch(err => {
-      if (callSession.logger) {
-        callSession.logger.withComponent('Database').error('Error saving to DB', err);
+      if (options.logger) {
+        options.logger.withComponent('Database').error('Error saving to DB', err);
       } else {
         console.error('[Database] Error saving to DB', err);
       }
