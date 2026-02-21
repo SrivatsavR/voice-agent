@@ -209,9 +209,10 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | 1. Say "Ek minute, main aapka email verify kar leti hoon." 2. Set 'raw_email' in 'updates_json'. |
-| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main aapka GST verify kar leti hoon." 2. Set 'raw_gstin' in 'updates_json'. |
-| NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
+| GIVING_EMAIL | user provides email | 1. Say "Ek minute." 2. Set 'raw_email' in 'updates_json'. |
+| HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
+| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute." 2. Set 'raw_gstin' in 'updates_json'. |
+| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
 | GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
@@ -221,8 +222,7 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool]
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -531,6 +531,70 @@ export function createCallSession(callerPhone = '', options = {}) {
     if (output.updates && typeof output.updates === 'object') {
       Object.assign(session, output.updates);
     }
+
+    // --- Background Verification ---
+    if (output.updates && output.updates.raw_gstin && !session.bg_gst_running) {
+      session.bg_gst_running = true;
+      const candidate = output.updates.raw_gstin;
+      delete session.raw_gstin;
+
+      Promise.resolve().then(async () => {
+        try {
+          const valStr = await validateGSTINTool.execute({ gstin: candidate });
+          const val = JSON.parse(valStr);
+          if (val.valid) {
+            session.gstin = val.normalized;
+            session.gstin_valid = true;
+            if (isActiveCallback && isActiveCallback()) {
+              if (options.logger) options.logger.withComponent('Validation').info('GST Validated in background');
+              await processTranscript(`[SYSTEM: Background verify DONE. GSTIN is VALID. You must immediately state it is correct and move to the next missing field.]`, tts);
+            }
+          } else {
+            session.gst_attempts = (session.gst_attempts || 0) + 1;
+            if (isActiveCallback && isActiveCallback()) {
+              if (options.logger) options.logger.withComponent('Validation').warn('GST Invalid in background', val);
+              await processTranscript(`[SYSTEM: Verification failed. You MUST tell the user the GST they provided is invalid: ${val.error}. Ask for GSTIN again.]`, tts);
+            }
+          }
+        } catch (e) {
+          if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
+        }
+        session.bg_gst_running = false;
+      });
+    }
+
+    if (output.updates && output.updates.raw_email && !session.bg_email_running) {
+      session.bg_email_running = true;
+      const candidate = output.updates.raw_email;
+      delete session.raw_email;
+
+      Promise.resolve().then(async () => {
+        try {
+          const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: candidate });
+          const norm = JSON.parse(normStr);
+          const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
+          const val = JSON.parse(valStr);
+          if (val.valid) {
+            session.email = val.normalized;
+            session.email_valid = true;
+            if (isActiveCallback && isActiveCallback()) {
+              if (options.logger) options.logger.withComponent('Validation').info('Email Validated in background');
+              await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts);
+            }
+          } else {
+            session.email_attempts = (session.email_attempts || 0) + 1;
+            if (isActiveCallback && isActiveCallback()) {
+              if (options.logger) options.logger.withComponent('Validation').warn('Email Invalid in background', val);
+              await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val.error}. Ask for email again.]`, tts);
+            }
+          }
+        } catch (e) {
+          if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
+        }
+        session.bg_email_running = false;
+      });
+    }
+    // --- End Background Verification ---
 
     const outputToUse = finalOutput;
 

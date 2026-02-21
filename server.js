@@ -14,6 +14,8 @@ import { getHistory, saveToHistory } from './services/history-service.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+// Import validators for background streaming extraction
+import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from './utils/validators.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -608,28 +610,52 @@ wss.on('connection', (ws) => {
           const currNode = callSession?.getCurrentNode();
           if (currNode === 'NODE_3_CONTACT_GST') {
             const sess = callSession.getSession();
-            // Check for 15 character alphanumeric combo ignoring spaces (typical GST pattern)
+            // Check for potential GST pattern
             if (!sess.gstin_valid && sess.gst_attempts < 2) {
-              const cleaned = partial.replace(/\s+/g, '');
-              const gstinRegex = /[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][0-9A-Za-z]Z[0-9A-Za-z]/i;
-              const match = cleaned.match(gstinRegex);
-              if (match) {
-                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found GSTIN: ${match[0]}`);
-                if (tts) tts.sendText("Ek minute, main aapka GST note kar leti hoon.");
-                if (asr?.forceFlush) asr.forceFlush();
-                else if (asr?._forceFlush) asr._forceFlush(); // Fallback
-                return;
+              const cleaned = partial.replace(/[\s\-]/g, '').toUpperCase();
+              const weakMatch = cleaned.match(/[A-Z0-9]{15,}/i);
+              if (weakMatch && !sess.bg_gst_running) {
+                sess.bg_gst_running = true;
+                const candidate = weakMatch[0];
+                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found potential GSTIN: ${candidate}, running background validation.`);
+
+                Promise.resolve().then(async () => {
+                  try {
+                    const valStr = await validateGSTINTool.execute({ gstin: candidate });
+                    const val = JSON.parse(valStr);
+                    if (val.valid) {
+                      sess.gstin = val.normalized;
+                      sess.gstin_valid = true;
+                      callLog.withComponent('Validation').info(`[Background] Validated Live Stream GSTIN: ${val.normalized}`);
+                    }
+                  } catch (e) { }
+                  // We don't reset bg_gst_running to true if valid so we don't spam. If invalid, allow retry if they keep speaking?
+                  // Just let it be for the utterance lifecycle.
+                  if (!sess.gstin_valid) sess.bg_gst_running = false;
+                });
               }
             }
             // Basic early catch for emails
             if (!sess.email_valid && sess.email_attempts < 2) {
               const lc = partial.toLowerCase();
-              if ((lc.includes('@') || lc.includes(' at ')) && (lc.includes('.com') || lc.includes(' dot '))) {
-                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found Email pattern`);
-                if (tts) tts.sendText("Ek minute, main aapka email note kar leti hoon.");
-                if (asr?.forceFlush) asr.forceFlush();
-                else if (asr?._forceFlush) asr._forceFlush(); // Fallback
-                return;
+              if ((lc.includes('@') || lc.includes(' at ')) && (lc.includes('.com') || lc.includes(' dot ')) && !sess.bg_email_running) {
+                sess.bg_email_running = true;
+                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found Email pattern, running background validation.`);
+
+                Promise.resolve().then(async () => {
+                  try {
+                    const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: lc });
+                    const norm = JSON.parse(normStr);
+                    const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
+                    const val = JSON.parse(valStr);
+                    if (val.valid) {
+                      sess.email = val.normalized;
+                      sess.email_valid = true;
+                      callLog.withComponent('Validation').info(`[Background] Validated Live Stream Email: ${val.normalized}`);
+                    }
+                  } catch (e) { }
+                  if (!sess.email_valid) sess.bg_email_running = false;
+                });
               }
             }
           }
