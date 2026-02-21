@@ -551,6 +551,7 @@ wss.on('connection', (ws) => {
             // Just trigger a flush to terminate the generation.
             tts.flush();
           }
+          isProcessingTranscript = false;
 
           if (callSession.isTerminal()) {
             isActive = false;
@@ -576,7 +577,6 @@ wss.on('connection', (ws) => {
           } else {
             // Processing done, not terminal: Resume silence filler for next gap
             // ONLY if the agent isn't currently speaking (if it is, onSpeakingEnd will handle it)
-            isProcessingTranscript = false;
             if (!tts?.isSpeaking) {
               silenceFiller?.resume();
             }
@@ -602,6 +602,32 @@ wss.on('connection', (ws) => {
             callLog.withComponent('User').info(`[Barge-in] Partial: ${partial}`);
             tts.clearAudio();
             silenceFiller?.pause();
+          }
+
+          // EARLY STREAMING EXTRACTION FOR GST & EMAIL
+          const currNode = callSession?.getCurrentNode();
+          if (currNode === 'NODE_3_CONTACT_GST') {
+            const sess = callSession.getSession();
+            // Check for 15 character alphanumeric combo ignoring spaces (typical GST pattern)
+            if (!sess.gstin_valid && sess.gst_attempts < 2) {
+              const cleaned = partial.replace(/\s+/g, '');
+              const gstinRegex = /[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][0-9A-Za-z]Z[0-9A-Za-z]/i;
+              const match = cleaned.match(gstinRegex);
+              if (match) {
+                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found GSTIN: ${match[0]}`);
+                asr?.close(); // Immediately force the utterance to end and trigger onTranscript
+                return;
+              }
+            }
+            // Basic early catch for emails
+            if (!sess.email_valid && sess.email_attempts < 2) {
+              const lc = partial.toLowerCase();
+              if ((lc.includes('@') || lc.includes(' at ')) && (lc.includes('.com') || lc.includes(' dot '))) {
+                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found Email pattern`);
+                asr?.close(); // Immediately force the utterance to end and trigger onTranscript
+                return;
+              }
+            }
           }
         }
       };

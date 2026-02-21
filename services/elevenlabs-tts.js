@@ -295,6 +295,7 @@ export class ElevenLabsTTS {
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
             this.ws.send(JSON.stringify({
                 text: text,
+                voice_settings: { stability: 0.5, similarity_boost: 0.8 },
                 try_trigger_generation: true
             }));
         } else {
