@@ -486,8 +486,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       },
       {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye)$/i,
-        updates: { interest_in_meesho: 'yes' },
-        say: "Badiya! Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai.",
+        updates: {},
+        say: "Aapka naam kya hai?",
         next_node: 'CONTINUE'
       },
       {
