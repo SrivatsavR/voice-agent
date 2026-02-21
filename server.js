@@ -433,6 +433,7 @@ wss.on('connection', (ws) => {
   let interruptionManager = null;
   let silenceFiller = null;
   let currentProcessingId = 0;
+  let isProcessingTranscript = false;
 
   // Create call-scoped logger (will get streamSid and callerPhone later)
   let callLog = Logger.forCall(callId, null, null);
@@ -472,7 +473,9 @@ wss.on('connection', (ws) => {
         },
         onSpeakingEnd: () => {
           interruptionManager.onSpeakingEnd();
-          silenceFiller?.resume(); // Agent finished: restart 7s countdown
+          if (!isProcessingTranscript) {
+            silenceFiller?.resume(); // Agent finished: restart 7s countdown
+          }
         },
       });
 
@@ -501,6 +504,7 @@ wss.on('connection', (ws) => {
           // 3. Safely reset and pause the filler for the duration of transcript processing
           silenceFiller?.reset();
           silenceFiller?.pause();
+          isProcessingTranscript = true;
 
           callLog.withComponent('User').info(transcript);
           const timer = callLog.withComponent('Workflow').time('processTranscript');
@@ -572,11 +576,13 @@ wss.on('connection', (ws) => {
           } else {
             // Processing done, not terminal: Resume silence filler for next gap
             // ONLY if the agent isn't currently speaking (if it is, onSpeakingEnd will handle it)
+            isProcessingTranscript = false;
             if (!tts?.isSpeaking) {
               silenceFiller?.resume();
             }
           }
         } catch (err) {
+          isProcessingTranscript = false;
           callLog.withComponent('WS').error('ASR callback error', err);
           silenceFiller?.resume();
         }
