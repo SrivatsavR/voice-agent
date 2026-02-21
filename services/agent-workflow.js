@@ -558,7 +558,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         } else {
           session.gst_attempts = (session.gst_attempts || 0) + 1;
           output.updates.gst_attempts = session.gst_attempts;
-          systemInjection = `[SYSTEM: Verification failed. GSTIN invalid: ${val.error}. explicitly ask for GSTIN again.]`;
+          systemInjection = `[SYSTEM: Verification failed. You MUST repeat the GST the user provided (${val.normalized}) and highlight that it is invalid: ${val.error}. Ask for GSTIN again.]`;
         }
         delete output.updates.raw_gstin;
         needsReRun = true;
