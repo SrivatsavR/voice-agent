@@ -68,6 +68,14 @@ const FILE_LOGGING_ENABLED = process.env.LOG_TO_FILE !== 'false';
 let _currentLogDate = null;
 let _logStream = null;
 
+const memoryLogs = [];
+const MAX_MEMORY_LOGS = 5000;
+
+export function getMemoryLogs(callId) {
+    if (!callId) return [];
+    return memoryLogs.filter(log => log.callId === callId);
+}
+
 function _getLogStream() {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
@@ -192,6 +200,18 @@ export class Logger {
 
         // Console output (human-readable, colored)
         this._logToConsole(now, levelName, message, data, fullContext);
+
+        // In-memory memory logging for real-time UI polling
+        const entry = {
+            timestamp: now.toISOString(),
+            level: levelName,
+            component: this.component,
+            message,
+            ...fullContext,
+        };
+        if (data) entry.data = data;
+        memoryLogs.push(entry);
+        if (memoryLogs.length > MAX_MEMORY_LOGS) memoryLogs.shift();
 
         // File output (JSON structured)
         if (FILE_LOGGING_ENABLED) {

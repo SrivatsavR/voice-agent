@@ -150,10 +150,10 @@ ${GLOBAL_GUARDRAILS}
 Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
 
 === QUESTION FLOW ===
-- **Identify Missing Info**: Check 'name_spoken', 'interest_in_meesho', and 'has_bank_account'.
+- **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If Name is missing: Ask "Aapka naam kya hai?".
-  2. If Name is known but NOT interested yet: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
+  2. If interested but Name is missing: Ask "Aapka naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
@@ -166,8 +166,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
 
 === ROUTING ===
-- Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho' AND 'has_bank_account' are both captured.
-- Once both are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
+- Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho', 'name_spoken', AND 'has_bank_account' are fully captured.
+- Once all are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
@@ -630,6 +630,9 @@ export function createCallSession(callerPhone = '', options = {}) {
           } catch (e) {
             console.error(e);
             if (options.logger) options.logger.withComponent('Validation').error('[Background] Listing Date tool crashed', e);
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              await processTranscript(`[SYSTEM: Listing Date validation failed due to internal error. Ask the user for the date again.]`, tts, silenceFiller);
+            }
           } finally {
             session.bg_listing_running = false;
           }
@@ -656,6 +659,9 @@ export function createCallSession(callerPhone = '', options = {}) {
           } catch (e) {
             console.error(e);
             if (options.logger) options.logger.withComponent('Validation').error('[Background] Price Range tool crashed', e);
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              await processTranscript(`[SYSTEM: Price Range validation failed due to internal error. Ask the user for the price range again.]`, tts, silenceFiller);
+            }
           } finally {
             session.bg_price_running = false;
           }
@@ -767,10 +773,16 @@ export function createCallSession(callerPhone = '', options = {}) {
           if (isActiveCallback()) {
             tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
             Object.assign(session, actual.updates);
+            if (options.logger && Object.keys(actual.updates || {}).length > 0) {
+              options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
+            }
             currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
         } else {
           Object.assign(session, actual.updates);
+          if (options.logger && Object.keys(actual.updates || {}).length > 0) {
+            options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
+          }
         }
       });
 
@@ -778,6 +790,9 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (nextNode !== currentNode) markNodeDone(currentNode);
       currentNode = nextNode;
       Object.assign(session, fastMatchResult.updates);
+      if (options.logger && Object.keys(fastMatchResult.updates || {}).length > 0) {
+        options.logger.withComponent('Database').info('Saving session updates', { updates: fastMatchResult.updates });
+      }
 
       return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
     }
@@ -786,7 +801,12 @@ export function createCallSession(callerPhone = '', options = {}) {
     const finalLLMOutput = await llmPromise;
     if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: false };
 
-    if (finalLLMOutput.updates) Object.assign(session, finalLLMOutput.updates);
+    if (finalLLMOutput.updates) {
+      Object.assign(session, finalLLMOutput.updates);
+      if (options.logger && Object.keys(finalLLMOutput.updates).length > 0) {
+        options.logger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
+      }
+    }
     handleBackgroundTasks(finalLLMOutput);
 
     const prevNode = currentNode;

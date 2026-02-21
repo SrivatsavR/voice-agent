@@ -10,7 +10,7 @@ import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from '
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
-import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
+import { Logger, serverLog, wsLog, generateCallId, getMemoryLogs } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 import { getHistory, saveToHistory } from './services/history-service.js';
 import path from 'path';
@@ -308,35 +308,16 @@ app.get('/api/history', (req, res) => {
 
 /**
  * GET /api/logs/:callId
- * Returns logs for a specific call from the filesystem
+ * Returns memory logs for a specific call
  */
 app.get('/api/logs/:callId', (req, res) => {
   const { callId } = req.params;
-  const today = new Date().toISOString().split('T')[0];
-  const logFile = path.join(__dirname, 'logs', `voice-ai-${today}.log`);
-
-  if (!fs.existsSync(logFile)) {
-    return res.json([]);
-  }
-
   try {
-    const content = fs.readFileSync(logFile, 'utf8');
-    const lines = content.split('\n');
-    const callLogs = lines
-      .filter(line => line.trim() !== '')
-      .map(line => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return null;
-        }
-      })
-      .filter(log => log && log.callId === callId);
-
-    res.json(callLogs);
+    const logs = getMemoryLogs(callId);
+    res.json(logs);
   } catch (err) {
-    serverLog.error('Error reading logs', err);
-    res.status(500).json({ error: 'Failed to read logs' });
+    serverLog.error('Error fetching memory logs', err);
+    res.status(500).json({ error: 'Failed to fetch logs' });
   }
 });
 
