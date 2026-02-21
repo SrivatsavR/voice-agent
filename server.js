@@ -743,7 +743,7 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   serverLog.info(`Server listening`, {
     port: PORT,
-    buildTag: 'v27-conv-silence-fix',
+    buildTag: 'v28-name-first-pitch-fix',
     asr_provider: ASR_PROVIDER,
     default_interruptions: DEFAULT_INTERRUPTIONS_ENABLED,
     silence_filler_timeout_ms: SILENCE_FILLER_TIMEOUT_MS,

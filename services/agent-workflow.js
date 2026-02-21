@@ -129,7 +129,7 @@ const welcomeAgent = new Agent({
   Deliver the welcome greeting exactly as scripted.Do NOT ask any questions.Do NOT engage in conversation.
 
 Say verbatim:
-"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya aap humare saath judna chahenge?"
+"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya main aapka naam jaan sakti hoon?"
 
 Set next_node to "NODE_1_NAME_INTEREST".Leave updates as empty object { }.
 
@@ -152,9 +152,9 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'name_spoken', 'interest_in_meesho', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If NOT interested yet: Ask for interest ("...Kya aap humare saath judna chahenge?").
-  2. If interested but Name is missing: Ask "Aapka naam kya hai?" (acknowledge interest first).
-  3. If interested and Name is known, but Bank Account is missing: Ask about Bank account.
+  1. If Name is missing: Ask "Aapka naam kya hai?".
+  2. If Name is known but NOT interested yet: Give the pitch ("Meesho par 14 crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
+  3. If interested and Name is known, but Bank Account is missing: Ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -466,7 +466,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya aap humare saath judna chahenge?";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya main aapka naam jaan sakti hoon?";
   }
 
   // --- Regex Fast-Path Configuration ---
@@ -478,7 +478,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           const name = match[2].trim();
           return {
             updates: { name_spoken: name },
-            say: `Achha, ${name} ji. Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?`,
+            say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap humare saath judna chahenge?`,
             next_node: 'CONTINUE'
           };
         }
