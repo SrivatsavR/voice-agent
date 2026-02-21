@@ -519,7 +519,7 @@ wss.on('connection', (ws) => {
           if (result.next_node === 'NODE_3_CONTACT_GST') {
             const sess = result.session;
             if (!sess.gstin_valid && sess.gst_attempts < 2) {
-              asr?.setLanguage?.('en');
+              asr?.setLanguage?.('en-IN');
             } else {
               asr?.setLanguage?.('hi');
             }

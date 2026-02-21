@@ -152,9 +152,9 @@ export class DeepgramASR {
             // Immediate flush when Deepgram VAD detects end of phrase
             this._forceFlush();
         } else if (transcript) {
-            // Fallback: If no speech_final arrives within 800ms, force flush to prevent hanging
+            // Fallback: If no speech_final arrives within 400ms, force flush to prevent hanging
             if (this._flushTimeout) clearTimeout(this._flushTimeout);
-            this._flushTimeout = setTimeout(() => this._forceFlush(), 800);
+            this._flushTimeout = setTimeout(() => this._forceFlush(), 400);
         }
     }
 

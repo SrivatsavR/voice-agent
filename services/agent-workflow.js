@@ -42,20 +42,40 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Zero commission, zero penalty. Sellers keep 100% profit.
 - **NO PHONE COLLECTION**: NEVER ask for their phone number.
 - **CHECK CONTEXT**: Check [SYSTEM: Current session variables] before every response. Do NOT ask for information that is already present.
-- **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates" object immediately and acknowledge it naturally.
+- **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates_json" object immediately and acknowledge it naturally.
 - **CRISP HINDI**: Use short, direct questions. Avoid "Aapka", "Jaan sakte hain", etc. if not needed.
   - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === RESPONSE FORMAT ===
-Strictly return JSON. "say" must be the FIRST key.
+Strictly return JSON matching the strict schema. "say" must be FIRST.
+The "updates_json" field MUST be a stringified JSON object, containing values to update.
 {
   "say": "Short crisp Hindi/Hinglish question?",
-  "updates": { "key": "value" },
+  "updates_json": "{\"key\": \"value\"}",
   "next_node": "TARGET_NODE_NAME",
   "notes": "Internal reasoning"
 }
 `;
+
+const RESPONSE_SCHEMA = {
+  type: "json_schema",
+  json_schema: {
+    name: "agent_response",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        say: { type: "string" },
+        updates_json: { type: "string" },
+        next_node: { type: "string" },
+        notes: { type: "string" }
+      },
+      required: ["say", "updates_json", "next_node", "notes"],
+      additionalProperties: false
+    }
+  }
+};
 
 // ─── Global Guardrails (injected into every conversational node) ──────────────
 const GLOBAL_GUARDRAILS = `
@@ -75,7 +95,7 @@ If confused, apologize once. If still confused, route to TERM_CALLBACK.
 If the caller is busy, accommodate immediately and route to TERM_CALLBACK.
 
 ── 5. CROSS-NODE EXTRACTION ──
-If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates' object immediately. 
+If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates_json' object immediately. 
 Refer to the current session data provided to see what is already captured.
 
 ── 6. TRANSITION RULE ──
@@ -109,7 +129,7 @@ Set next_node to "NODE_1_NAME_INTEREST".Leave updates as empty object { }.
   - Do NOT modify the welcome line.Speak it exactly.
 - Do NOT add extra questions or information.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true, response_format: { type: "json_object" } }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
@@ -119,7 +139,7 @@ const nameInterestAgent = new Agent({
 ${GLOBAL_GUARDRAILS}
 
 === YOUR TASK ===
-Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates' and move to the next MISSING question.
+Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
 
 === QUESTION FLOW ===
 1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Main jaan sakti hoon aapka naam kya hai?"
@@ -133,14 +153,14 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | INTERESTED | "yes", "theek hai", "haan" | Set interest_in_meesho: "yes", stay in NODE_1_NAME_INTEREST and ask about Bank Account. |
 | NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi [name] ji, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
-| EXTRA INFO | user gives price/items | Capture in 'updates', move to next MISSING question. |
+| EXTRA INFO | user gives price/items | Capture in 'updates_json', move to next MISSING question. |
 
 === ROUTING ===
 - Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho' AND 'has_bank_account' are both captured.
 - Once both are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
 - Every 'say' MUST end with a question mark.`,
-  model: "gpt-4o",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -157,20 +177,17 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing, ask: "Aur in items ki price range kya rehti hai?"
 3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
-   - When they answer, use **normalize_listing_date** tool to convert their spoken timing into YYYY-MM-DD.
-   - Use the current date from the system context as reference.
-   - Store the 'normalized' YYYY-MM-DD in 'listing_start'.
+   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
-- Use 'validate_price_range' tool when both prices are mentioned.
+- If user provides price range, set 'raw_price_min' and 'raw_price_max' in 'updates_json' directly.
 
 === ROUTING ===
 - Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
-  model: "gpt-4o",
-  tools: [validatePriceRangeTool, normalizeListingDateTool],
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -191,10 +208,10 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | 1. Call normalize_spoken_email. 2. Call validate_email. 3. Update 'email' and 'email_valid' in 'updates'. |
-| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main verify kar leti hoon." 2. Call validate_gstin. 3. Update 'gstin' and 'gstin_valid' in 'updates'. If invalid, increment 'gst_attempts' and tell the user the invalid GST they submitted ("Aapne X bataya hai jo invalid hai."). |
-| NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates'. Ask for UIN/Enrollment ID. |
-| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates', move to Node 4. |
+| GIVING_EMAIL | user provides email | 1. Say "Ek minute, main verify kar leti hoon." 2. Set 'raw_email' in 'updates_json'. |
+| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main verify kar leti hoon." 2. Set 'raw_gstin' in 'updates_json'. |
+| NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
+| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
 === ROUTING ===
@@ -202,9 +219,8 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 - Note: If user fails GST 2 times, mark 'gst_declined': true and ask for UIN.
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
-  model: "gpt-4o",
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -218,14 +234,13 @@ Conclude the call. Inform them about the WhatsApp link. Answer any questions usi
 
 === FLOW ===
 1. **Closing**: "Saari details collect ho gayi hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **QnA**: If they ask anything, use 'search_knowledge_base' and ALWAYS end with: "Kya koi aur sawaal hai aapka?"
+2. **QnA**: If they ask anything, set 'kb_query' in 'updates_json' to their question.
 
 === RULES ===
 - EVERY response must end with a question mark until they are ready to hang up.
-- Use the tool for all Meesho info.`,
-  model: "gpt-4o",
-  tools: [searchKnowledgeBaseTool],
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
+- You do not need to answer immediately, the system will answer if you set kb_query.`,
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
@@ -307,9 +322,15 @@ function parseAgentOutput(rawOutput) {
 
   try {
     const parsed = JSON.parse(text);
+    let updatesObj = {};
+    if (parsed.updates_json && parsed.updates_json !== '{}') {
+      try { updatesObj = JSON.parse(parsed.updates_json); } catch (e) { }
+    } else if (parsed.updates && typeof parsed.updates === 'object') {
+      updatesObj = parsed.updates;
+    }
     return {
       say: parsed.say || '',
-      updates: (parsed.updates && typeof parsed.updates === 'object') ? parsed.updates : {},
+      updates: updatesObj,
       next_node: parsed.next_node || 'CONTINUE',
       notes: parsed.notes || ''
     };
@@ -474,32 +495,147 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
 
     let hasStreamed = false;
-    const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
-      return await runNode(agent, userMessage, (chunk) => {
-        if (tts && isActiveCallback && isActiveCallback()) {
-          hasStreamed = true;
-          tts.sendText(chunk);
+    let ttsBuffer = "";
+    const sentenceRegex = /[.,?!|।]/;
+
+    const streamCallback = (chunk) => {
+      if (tts && isActiveCallback && isActiveCallback()) {
+        hasStreamed = true;
+        ttsBuffer += chunk;
+        if (sentenceRegex.test(ttsBuffer)) {
+          const match = ttsBuffer.match(/.*?[.,?!|।]/);
+          if (match) {
+            const toSend = match[0];
+            tts.sendText(toSend);
+            ttsBuffer = ttsBuffer.substring(toSend.length);
+          }
         }
-      });
+      }
+    };
+
+    let raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
+      return await runNode(agent, userMessage, streamCallback);
     });
 
-    const output = parseAgentOutput(raw);
+    if (ttsBuffer.trim() && tts && isActiveCallback && isActiveCallback()) {
+      tts.sendText(ttsBuffer);
+      ttsBuffer = "";
+    }
 
-    // Merge updates into session
+    let output = parseAgentOutput(raw);
+    let finalOutput = output;
+
+    // --- Native External Validation Loop ---
+    let needsReRun = false;
+    let systemInjection = "";
+
+    try {
+      if (output.updates && output.updates.raw_email) {
+        const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: output.updates.raw_email });
+        const norm = JSON.parse(normStr);
+        const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
+        const val = JSON.parse(valStr);
+        if (val.valid) {
+          output.updates.email = val.normalized;
+          output.updates.email_valid = true;
+          systemInjection = `[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`;
+        } else {
+          session.email_attempts = (session.email_attempts || 0) + 1;
+          output.updates.email_attempts = session.email_attempts;
+          systemInjection = `[SYSTEM: Verification failed. Email invalid: ${val.error}. Ask for email again.]`;
+        }
+        delete output.updates.raw_email;
+        needsReRun = true;
+      }
+
+      if (output.updates && output.updates.raw_gstin) {
+        const valStr = await validateGSTINTool.execute({ gstin: output.updates.raw_gstin });
+        const val = JSON.parse(valStr);
+        if (val.valid) {
+          output.updates.gstin = val.normalized;
+          output.updates.gstin_valid = true;
+          systemInjection = `[SYSTEM: Verification done. GSTIN is valid. Move to next field.]`;
+        } else {
+          session.gst_attempts = (session.gst_attempts || 0) + 1;
+          output.updates.gst_attempts = session.gst_attempts;
+          systemInjection = `[SYSTEM: Verification failed. GSTIN invalid: ${val.error}. explicitly ask for GSTIN again.]`;
+        }
+        delete output.updates.raw_gstin;
+        needsReRun = true;
+      }
+
+      if (output.updates && output.updates.raw_price_min !== undefined && output.updates.raw_price_max !== undefined) {
+        const valStr = await validatePriceRangeTool.execute({ price_min: output.updates.raw_price_min, price_max: output.updates.raw_price_max });
+        const val = JSON.parse(valStr);
+        if (val.valid) {
+          output.updates.price_min = val.price_min;
+          output.updates.price_max = val.price_max;
+          systemInjection = val.swapped ? `[SYSTEM: Prices swapped. Confirm with user: ${val.note}]` : `[SYSTEM: Price valid. Move to next.]`;
+        } else {
+          systemInjection = `[SYSTEM: Price invalid: ${val.error}. Ask again.]`;
+        }
+        delete output.updates.raw_price_min;
+        delete output.updates.raw_price_max;
+        needsReRun = true;
+      }
+
+      if (output.updates && output.updates.raw_listing_start) {
+        const valStr = await normalizeListingDateTool.execute({ spoken_date: output.updates.raw_listing_start, current_date_iso: new Date().toISOString().split('T')[0] });
+        const val = JSON.parse(valStr);
+        if (val.valid) {
+          output.updates.listing_start = val.normalized;
+        }
+        delete output.updates.raw_listing_start;
+      }
+
+      if (output.updates && output.updates.kb_query) {
+        const valStr = await searchKnowledgeBaseTool.execute({ query: output.updates.kb_query });
+        const val = JSON.parse(valStr);
+        systemInjection = `[SYSTEM: Knowledge Base Answer: ${val.answer}]`;
+        delete output.updates.kb_query;
+        needsReRun = true;
+      }
+    } catch (e) {
+      if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
+    }
+
     if (output.updates && typeof output.updates === 'object') {
       Object.assign(session, output.updates);
     }
 
+    if (needsReRun && systemInjection && isActiveCallback && isActiveCallback()) {
+      ttsBuffer = "";
+      const raw2 = await Logger.runWithContext(options.logger?.context || {}, async () => {
+        return await runNode(agent, systemInjection, streamCallback);
+      });
+
+      if (ttsBuffer.trim() && tts && isActiveCallback && isActiveCallback()) {
+        tts.sendText(ttsBuffer);
+        ttsBuffer = "";
+      }
+
+      const output2 = parseAgentOutput(raw2);
+      if (output2.updates && typeof output2.updates === 'object') {
+        Object.assign(session, output2.updates);
+      }
+
+      finalOutput = output2;
+      finalOutput.say = (output.say + " " + output2.say).trim();
+    }
+    // --- End External Validation Loop ---
+
+    const outputToUse = finalOutput;
+
     // Fire-and-forget DB save
     Promise.resolve().then(() => {
-      const hasUpdates = output.updates && Object.keys(output.updates).length > 0;
-      const hasNotes = output.notes && output.notes !== '' && output.notes !== 'parse_error';
+      const hasUpdates = outputToUse.updates && Object.keys(outputToUse.updates).length > 0;
+      const hasNotes = outputToUse.notes && outputToUse.notes !== '' && outputToUse.notes !== 'parse_error';
 
       if (hasUpdates || hasNotes) {
         if (options.logger) {
           options.logger.withComponent('Database').info('Saving session updates', {
-            updates: output.updates,
-            notes: output.notes
+            updates: outputToUse.updates,
+            notes: outputToUse.notes
           });
         }
       }
@@ -508,7 +644,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     });
 
     const prevNode = currentNode;
-    const nextNode = output.next_node === 'CONTINUE' ? currentNode : output.next_node;
+    const nextNode = outputToUse.next_node === 'CONTINUE' ? currentNode : outputToUse.next_node;
 
     if (nextNode !== prevNode) {
       markNodeDone(prevNode);
@@ -517,9 +653,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     currentNode = nextNode;
 
     return {
-      say: output.say,
+      say: outputToUse.say,
       next_node: nextNode,
-      notes: output.notes,
+      notes: outputToUse.notes,
       session: { ...session },
       streamedByNode: hasStreamed
     };
