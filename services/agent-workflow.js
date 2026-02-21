@@ -113,25 +113,27 @@ const nameInterestAgent = new Agent({
 ${GLOBAL_GUARDRAILS}
 
 === YOUR TASK ===
-Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price in the greeting, CAPTURE them in 'updates' and skip to the next logical question.
+Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates' and move to the next MISSING question.
 
 === QUESTION FLOW ===
 1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Aapka naam kya hai?"
-2. **Interest**: Once name is known, ask: "Ji [name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap iske baare mein aur jaanna chahenge?"
-3. **Bank Account**: If interested, ask: "Dhananyavad! Kya aapke paas bank account hai? Payments ke liye ye zaroori hai."
+2. **Interest**: Once name is known, ask: "Ji [name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
+3. **Bank Account**: If interested, ask: "Zaroor! Kya aapke paas active bank account hai? Payment ke liye zaroori hai."
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| BUSY | "call later", "busy" | Confirm and set next_node: TERM_CALLBACK |
-| NOT INTERESTED | "no", "nahi" | Polite exit and set next_node: TERM_NOT_INTERESTED |
-| INTERESTED | "yes", "theek hai" | Set interest_in_meesho: "yes", ask Bank Account question. |
+| GIVING_NAME | user provides name | Update 'name_spoken', stay in NODE_1_NAME_INTEREST and ask about Interest. |
+| INTERESTED | "yes", "theek hai", "haan" | Set interest_in_meesho: "yes", stay in NODE_1_NAME_INTEREST and ask about Bank Account. |
+| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi [name] ji, Meesho se judne ke liye dhanyavad. Have a great day!" |
+| BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price/items | Capture in 'updates', move to next MISSING question. |
 
 === ROUTING ===
-- Move to NODE_2_DETAILS only when 'interest_in_meesho' and 'has_bank_account' are captured.
-- EVERY 'say' must end with a question mark.`,
-  model: "gpt-4o-mini",
+- Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho' AND 'has_bank_account' are both captured.
+- Once both are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
+- Every 'say' MUST end with a question mark.`,
+  model: "gpt-4o",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
 });
 
@@ -143,21 +145,21 @@ ${GLOBAL_GUARDRAILS}
 ${DATA_INTERPRETATION_CONTEXT}
 
 === YOUR TASK ===
-Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentioned items or price range in Node 1, do NOT ask for them. Capture any new info and move to the next missing field.
+Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentioned items or price range, do NOT ask for them. Capture any remaining info.
 
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' or 'price_max' is missing, ask: "Aapke items ki price range kya hai? Minimum aur maximum batayein?"
-3. **Speed**: If 'switch_speed_days' is missing, ask: "Agar hum aaj start karein, toh aap kab se listing shuru kar denge?"
+2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai? Minimum aur maximum batayein?"
+3. **Speed**: If 'switch_speed_days' is missing, ask: "Agar aaj shuru karein, toh aap kab se listing start kar denge?"
 
 === RULES ===
-- NEVER explain why you are asking. (No "I need this for...")
 - EVERY 'say' must end with a question mark.
-- Use 'validate_price_range' tool when both prices are present.
+- Use 'validate_price_range' tool when both prices are mentioned.
 
 === ROUTING ===
-- Move to NODE_3_CONTACT_GST only when Items, Price, and Speed are captured.`,
-  model: "gpt-4o-mini",
+- Stay in NODE_2_DETAILS until Items, Price, and Speed are captured.
+- Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
+  model: "gpt-4o",
   tools: [validatePriceRangeTool],
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
 });
