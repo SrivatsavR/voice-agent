@@ -129,7 +129,7 @@ const welcomeAgent = new Agent({
   Deliver the welcome greeting exactly as scripted.Do NOT ask any questions.Do NOT engage in conversation.
 
 Say verbatim:
-"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon."
+"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya aap humare saath judna chahenge?"
 
 Set next_node to "NODE_1_NAME_INTEREST".Leave updates as empty object { }.
 
@@ -466,7 +466,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya aap humare saath judna chahenge?";
   }
 
   // --- Regex Fast-Path Configuration ---
