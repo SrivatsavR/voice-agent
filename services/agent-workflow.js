@@ -113,7 +113,7 @@ const DATA_INTERPRETATION_CONTEXT = `
 - Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
 - Spelled words: "r-o-h-i-t" or "R O H I T" → "rohit".
 - Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
-- GSTIN: Remove spaces and uppercase before validating.
+- GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase.
 - Phone numbers: Normalize to 10 digits if mentioned.
 `;
 
@@ -216,14 +216,13 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 |--------|--------|--------|
 | GIVING_EMAIL | user provides email | 1. Say "Ek minute." 2. Set 'raw_email' in 'updates_json'. |
 | HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
-| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute." 2. Set 'raw_gstin' in 'updates_json'. |
+| GIVING_GST | user provides GST/UIN | 1. Capture into 'gstin' in 'updates_json'. 2. Set 'gstin_valid': true (trust the capture). |
 | NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
 | GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
 === ROUTING ===
-- Stay in NODE_3 until Email and (GST OR UIN) are fully captured.
-- Note: If user fails GST 2 times, mark 'gst_declined': true and ask for UIN.
+- Stay in NODE_3 until Email and (GST OR UIN) are captured.
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
@@ -538,39 +537,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       Object.assign(session, output.updates);
     }
 
-    // --- Background Verification ---
-    if (output.updates && output.updates.raw_gstin && !session.bg_gst_running) {
-      session.bg_gst_running = true;
-      const candidate = output.updates.raw_gstin;
-      delete session.raw_gstin;
-
-      Promise.resolve().then(async () => {
-        try {
-          if (silenceFiller) silenceFiller.pause();
-          const valStr = await validateGSTINTool.execute({ gstin: candidate });
-          const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-          if (val && val.valid) {
-            session.gstin = val.normalized;
-            session.gstin_valid = true;
-            if (isActiveCallback && isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('GST Validated in background');
-              await processTranscript(`[SYSTEM: Background verify DONE. GSTIN is VALID. You must immediately state it is correct and move to the next missing field.]`, tts, silenceFiller);
-            }
-          } else {
-            session.gst_attempts = (session.gst_attempts || 0) + 1;
-            if (isActiveCallback && isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').warn('GST Invalid in background', val);
-              await processTranscript(`[SYSTEM: Verification failed. You MUST tell the user the GST they provided is invalid: ${val ? val.error : 'unknown error'}. Ask for GSTIN again.]`, tts, silenceFiller);
-            }
-          }
-        } catch (e) {
-          if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
-        } finally {
-          session.bg_gst_running = false;
-          if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
-        }
-      });
-    }
+    // --- Email Background Verification (GST moved to direct capture) ---
 
     if (output.updates && output.updates.raw_email && !session.bg_email_running) {
       session.bg_email_running = true;
