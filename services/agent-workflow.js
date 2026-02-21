@@ -1,4 +1,5 @@
 import { Agent, Runner, withTrace, tool } from '@openai/agents';
+import { Logger } from '../utils/logger.js';
 import {
   validateEmailTool,
   normalizeSpokenEmailTool,
@@ -547,11 +548,13 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
 
     let hasStreamed = false;
-    const raw = await runNode(agent, userMessage, (chunk) => {
-      if (tts && isActiveCallback && isActiveCallback()) {
-        hasStreamed = true;
-        tts.sendText(chunk);
-      }
+    const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
+      return await runNode(agent, userMessage, (chunk) => {
+        if (tts && isActiveCallback && isActiveCallback()) {
+          hasStreamed = true;
+          tts.sendText(chunk);
+        }
+      });
     });
 
     // We pass the raw object to parseAgentOutput. 

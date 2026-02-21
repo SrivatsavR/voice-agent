@@ -9,6 +9,13 @@ import { createCallSession } from './services/agent-workflow.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
 import { Logger, serverLog, wsLog, generateCallId } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
+import { getHistory, saveToHistory } from './services/history-service.js';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // detect silence after 7s
 const SILENCE_FILLER_TIMEOUT_MS = 7000;
@@ -116,6 +123,7 @@ const app = express();
 app.set('trust proxy', true);
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
@@ -247,21 +255,111 @@ app.get('/interruptions', (req, res) => {
   res.json({ active_calls: calls.length, calls });
 });
 
+res.json({ active_calls: calls.length, calls });
+});
+
+// ─── Frontend Support APIs ───────────────────────────────────────────────────
+
+const liveSessions = new Map();
+
 /**
- * GET /calls
- * 
- * Returns a list of all active calls.
+ * GET /api/history
+ * Returns last calls history
  */
-app.get('/calls', (req, res) => {
-  const calls = [];
-  for (const [callId, call] of activeCalls) {
-    calls.push({
+app.get('/api/history', (req, res) => {
+  res.json(getHistory());
+});
+
+/**
+ * GET /api/logs/:callId
+ * Returns logs for a specific call from the filesystem
+ */
+app.get('/api/logs/:callId', (req, res) => {
+  const { callId } = req.params;
+  const today = new Date().toISOString().split('T')[0];
+  const logFile = path.join(__dirname, 'logs', `voice-ai-${today}.log`);
+
+  if (!fs.existsSync(logFile)) {
+    return res.json([]);
+  }
+
+  try {
+    const content = fs.readFileSync(logFile, 'utf8');
+    const lines = content.split('\n');
+    const callLogs = lines
+      .filter(line => line.trim() !== '')
+      .map(line => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(log => log && log.callId === callId);
+
+    res.json(callLogs);
+  } catch (err) {
+    serverLog.error('Error reading logs', err);
+    res.status(500).json({ error: 'Failed to read logs' });
+  }
+});
+
+/**
+ * POST /api/chat
+ * Simulated chat endpoint using the same agent workflow
+ */
+app.post('/api/chat', async (req, res) => {
+  const { text, callId: existingCallId, callerPhone = 'chat-user' } = req.body;
+
+  let callId = existingCallId;
+  let sessionObj = null;
+
+  if (!callId) {
+    callId = generateCallId();
+    sessionObj = createCallSession(callerPhone, { logger: Logger.forCall(callId, 'chat', callerPhone) });
+    liveSessions.set(callId, sessionObj);
+    // Mock welcome
+    const welcome = await sessionObj.getWelcome();
+    return res.json({
       callId,
-      ...call.interruptionManager.getStats(),
+      say: welcome,
+      session: sessionObj.getSession()
     });
   }
-  res.json({ active_calls: calls.length, calls });
+
+  sessionObj = liveSessions.get(callId);
+  if (!sessionObj) {
+    // Session expired or not found, start new
+    callId = generateCallId();
+    sessionObj = createCallSession(callerPhone, { logger: Logger.forCall(callId, 'chat', callerPhone) });
+    liveSessions.set(callId, sessionObj);
+    const welcome = await sessionObj.getWelcome();
+    return res.json({
+      callId,
+      say: welcome,
+      session: sessionObj.getSession(),
+      wasExpired: true
+    });
+  }
+
+  try {
+    const result = await sessionObj.processTranscript(text);
+
+    if (sessionObj.isTerminal()) {
+      saveToHistory(sessionObj.getSession());
+      liveSessions.delete(callId);
+    }
+
+    res.json({
+      callId,
+      ...result
+    });
+  } catch (err) {
+    serverLog.error('Chat error', err);
+    res.status(500).json({ error: 'Session processing failed' });
+  }
 });
+
 
 // â”€â”€â”€ WebSocket Upgrade Handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -508,9 +606,13 @@ wss.on('connection', (ws) => {
     tts?.close();
 
     // Unregister from active calls
+    if (callSession) {
+      saveToHistory(callSession.getSession());
+    }
     activeCalls.delete(callId);
     log.info('Call cleanup complete', { callId });
   });
+});
 });
 
 const PORT = process.env.PORT || 8080;

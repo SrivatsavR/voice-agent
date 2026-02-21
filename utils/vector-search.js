@@ -1,6 +1,9 @@
 import { Pinecone } from '@pinecone-database/pinecone';
 import { tool } from '@openai/agents';
 import dotenv from 'dotenv';
+import { Logger } from './logger.js';
+
+const log = new Logger('VectorSearch');
 
 dotenv.config();
 
@@ -16,7 +19,7 @@ if (PINECONE_API_KEY && PINECONE_INDEX_NAME) {
     pc = new Pinecone({ apiKey: PINECONE_API_KEY });
     pineconeIndex = pc.index(PINECONE_INDEX_NAME);
 } else {
-    console.warn('[Vector Search] Pinecone API key or Index Name is missing in .env. Search will be disabled.');
+    log.warn('Pinecone API key or Index Name is missing in .env. Search will be disabled.');
 }
 
 export const searchKnowledgeBaseTool = tool({
@@ -38,7 +41,7 @@ export const searchKnowledgeBaseTool = tool({
                 return "I'm sorry, my knowledge base is currently offline. Is there anything else I can assist you with?";
             }
 
-            console.log(`[Vector Search] Generating embedding for query: "${query}"`);
+            log.info(`Generating embedding for query: "${query}"`);
 
             // 1. Generate an embedding for the user's question using Pinecone Inference
             const embeddingResponse = await pc.inference.embed({
@@ -48,9 +51,10 @@ export const searchKnowledgeBaseTool = tool({
             });
 
             const queryVector = embeddingResponse.data[0].values;
+            log.info(`Generated embedding vector (first 5 of ${queryVector.length})`, queryVector.slice(0, 5));
 
             // 2. Query Pinecone using the embedding
-            console.log(`[Vector Search] Querying Pinecone index: ${PINECONE_INDEX_NAME}`);
+            log.info(`Querying Pinecone index: ${PINECONE_INDEX_NAME}`);
             const searchResults = await pineconeIndex.query({
                 vector: queryVector,
                 topK: 3, // Change this to return more chunks if needed

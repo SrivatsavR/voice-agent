@@ -1,0 +1,59 @@
+
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.tab-btn.active {
+    color: white;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.variable-item {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.variable-item.updated {
+    background: rgba(79, 70, 229, 0.1);
+    border-color: rgba(79, 70, 229, 0.3);
+    transform: scale(1.02);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+#chat-messages > div {
+    animation: fadeIn 0.3s ease-out forwards;
+}
+
+.log-entry {
+    border-left: 2px solid transparent;
+    padding-left: 8px;
+    margin-bottom: 2px;
+}
+
+.log-INFO { color: #10b981; }
+.log-ERROR { color: #ef4444; }
+.log-WARN { color: #f59e0b; }
+.log-DEBUG { color: #3b82f6; }
+
+.embedding-peek {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 10px;
+    color: #a78bfa;
+    margin: 4px 0;
+    word-break: break-all;
+}

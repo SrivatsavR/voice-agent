@@ -1,6 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { AsyncLocalStorage } from 'async_hooks';
+
+const logStorage = new AsyncLocalStorage();
 
 // ─── Log Levels ──────────────────────────────────────────────────────────────
 
@@ -118,6 +121,13 @@ export class Logger {
     }
 
     /**
+     * Run a block of code with a specific call context.
+     */
+    static runWithContext(context, fn) {
+        return logStorage.run(context, fn);
+    }
+
+    /**
      * Create a child logger with additional call context.
      */
     withCall(callId, streamSid, callerPhone) {
@@ -176,24 +186,28 @@ export class Logger {
         const now = new Date();
         const levelName = LEVEL_NAMES[level];
 
+        // Merge with async context if available
+        const asyncContext = logStorage.getStore() || {};
+        const fullContext = { ...asyncContext, ...this.context };
+
         // Console output (human-readable, colored)
-        this._logToConsole(now, levelName, message, data);
+        this._logToConsole(now, levelName, message, data, fullContext);
 
         // File output (JSON structured)
         if (FILE_LOGGING_ENABLED) {
-            this._logToFile(now, levelName, message, data);
+            this._logToFile(now, levelName, message, data, fullContext);
         }
     }
 
-    _logToConsole(now, level, message, data) {
+    _logToConsole(now, level, message, data, context) {
         const timestamp = now.toISOString().split('T')[1].replace('Z', '');
         const levelColor = COLORS[level] || COLORS.RESET;
         const componentColor = COMPONENT_COLORS[this.component] || COLORS.RESET;
 
         // Build context string
         let ctx = '';
-        if (this.context.callId) {
-            ctx += ` ${COLORS.DIM}call=${this.context.callId}${COLORS.RESET}`;
+        if (context.callId) {
+            ctx += ` ${COLORS.DIM}call=${context.callId}${COLORS.RESET}`;
         }
 
         // Format: [HH:MM:SS.mmm] [LEVEL] [Component] message {data}
@@ -226,7 +240,7 @@ export class Logger {
         }
     }
 
-    _logToFile(now, level, message, data) {
+    _logToFile(now, level, message, data, context) {
         const stream = _getLogStream();
         if (!stream) return;
 
@@ -235,9 +249,9 @@ export class Logger {
             level,
             component: this.component,
             message,
-            ...(this.context.callId && { callId: this.context.callId }),
-            ...(this.context.streamSid && { streamSid: this.context.streamSid }),
-            ...(this.context.callerPhone && { callerPhone: this.context.callerPhone }),
+            ...(context.callId && { callId: context.callId }),
+            ...(context.streamSid && { streamSid: context.streamSid }),
+            ...(context.callerPhone && { callerPhone: context.callerPhone }),
         };
 
         if (data !== undefined && data !== null) {
