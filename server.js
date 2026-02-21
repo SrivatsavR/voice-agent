@@ -108,7 +108,7 @@ class SilenceFillerManager {
       const name = this._callSession?.getSession()?.preferred_name || '';
       const phrase = name ? `Hello ${name}, kya aap mujhe sun pa rahe hain?` : `Hello, kya aap mujhe sun pa rahe hain?`;
 
-      this._log.info('Firing silence filler phrase at 10s', { phrase });
+      this._log.info('Firing silence filler phrase at 7s', { phrase });
       this._tts.sendText(phrase);
       this._tts.flush();
     } else {
@@ -702,19 +702,16 @@ wss.on('connection', (ws) => {
       // Twilio can send 'stop' prematurely or for a previous stream.
       // The actual cleanup should only happen on ws.close.
       // If the caller truly hung up, Twilio will also close the WebSocket.
-      const stopStreamSid = msg.stop?.streamSid || 'unknown';
+      const stopStreamSid = msg.stop?.streamSid || msg.streamSid || 'unknown';
       const log = callLog.withComponent('WS');
 
       log.info('Stop command from Twilio', { stopStreamSid, activeStreamSid });
 
-      // Only mark inactive if this stop is for our active stream
-      if (stopStreamSid === activeStreamSid) {
-        log.info('Stop is for active stream â€” marking inactive, waiting for WS close');
+      if (stopStreamSid === activeStreamSid || stopStreamSid === 'unknown') {
+        log.info('Stop received â€” marking inactive, waiting for WS close');
         isActive = false;
-        // Do NOT close ASR/TTS here â€” let the ws.close handler do it.
-        // This prevents premature teardown if the stop arrives early.
       } else {
-        log.debug('Stop is for a different/unknown stream â€” ignoring');
+        log.debug('Stop is for a different stream â€” ignoring');
       }
     }
   });
@@ -745,7 +742,7 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   serverLog.info(`Server listening`, {
     port: PORT,
-    buildTag: 'v22-interruptions-filler-overlap-fix',
+    buildTag: 'v25-stability-queue-fix',
     asr_provider: ASR_PROVIDER,
     default_interruptions: DEFAULT_INTERRUPTIONS_ENABLED,
     silence_filler_timeout_ms: SILENCE_FILLER_TIMEOUT_MS,

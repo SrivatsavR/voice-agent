@@ -42,7 +42,9 @@ export class ElevenLabsTTS {
         this._isSpeaking = false;
         this._speakingEndTimer = null; // Delayed end for buffer drain
         this._expectedTwilioEndTime = 0;
-        this._currentGenerationId = 0; // Track current audio stream to avoid stale chunks
+        this._currentGenerationId = 0;
+        this._audioQueue = []; // Queue for chunks to be dripped to Twilio
+        this._isDripping = false;
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -56,8 +58,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // optimize_streaming_latency=4 for fastest delivery
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=4`;
+            // optimize_streaming_latency=2 for balance of speed and stability
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=2`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -90,10 +92,10 @@ export class ElevenLabsTTS {
                 };
 
                 // Initialize with BOS (Beginning of Stream) message
-                // Sending a space helps 'warm up' the engine/bridge
                 this.ws.send(JSON.stringify({
                     text: " ",
-                    voice_settings: voiceSettings
+                    voice_settings: voiceSettings,
+                    try_trigger_generation: true
                 }));
 
                 this._reconnectAttempts = 0;
@@ -232,7 +234,8 @@ export class ElevenLabsTTS {
      */
     clearAudio() {
         this._expectedTwilioEndTime = 0;
-        this._currentGenerationId++; // Invalidate any pending audio chunks
+        this._currentGenerationId++;
+        this._audioQueue = []; // Clear pending chunks
         this._cancelSpeakingEndTimer();
 
         // 1. Clear Twilio buffer
@@ -338,48 +341,56 @@ export class ElevenLabsTTS {
     }
 
     _sendToTwilio(audioBase64) {
-        if (!audioBase64 || audioBase64.length === 0) return;
+        if (!audioBase64 || audioBase64.length === 0 || this._closed) return;
 
         const fullBuffer = Buffer.from(audioBase64, 'base64');
         const totalBytes = fullBuffer.length;
 
-        // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
+        // 1. Durations for isSpeaking tracking
         const chunkDurationMs = (totalBytes / 8000) * 1000;
         const now = Date.now();
-        if (this._expectedTwilioEndTime < now) {
-            this._expectedTwilioEndTime = now + chunkDurationMs;
-        } else {
-            this._expectedTwilioEndTime += chunkDurationMs;
+        this._expectedTwilioEndTime = Math.max(this._expectedTwilioEndTime, now) + chunkDurationMs;
+        this._scheduleSpeakingEnd(this._expectedTwilioEndTime - now + 500);
+
+        // 2. Chunker: 640 bytes = 80ms of Mulaw at 8kHz.
+        const CHUNK_SIZE = 640;
+        for (let offset = 0; offset < totalBytes; offset += CHUNK_SIZE) {
+            this._audioQueue.push({
+                genId: this._currentGenerationId,
+                data: fullBuffer.slice(offset, Math.min(offset + CHUNK_SIZE, totalBytes)).toString('base64')
+            });
         }
 
-        const timeUntilEnd = this._expectedTwilioEndTime - now;
-        this._scheduleSpeakingEnd(timeUntilEnd + 500);
+        // 3. Start drip loop if not active
+        if (!this._isDripping) {
+            this._isDripping = true;
+            this._dripToTwilio();
+        }
+    }
 
-        // Chunker: Twilio prefers chunks between 20ms and 100ms.
-        // 640 bytes = 80ms of Mulaw at 8kHz.
-        const currentGenId = this._currentGenerationId;
+    _dripToTwilio() {
+        if (this._closed || this._audioQueue.length === 0) {
+            this._isDripping = false;
+            return;
+        }
 
-        const sendChunk = () => {
-            // Stop if generation was cleared, or instance closed, or no longer speaking
-            if (this._closed || currentGenId !== this._currentGenerationId) return;
-            if (offset >= totalBytes) return;
+        const chunk = this._audioQueue.shift();
 
-            const chunk = fullBuffer.slice(offset, Math.min(offset + CHUNK_SIZE, totalBytes));
-            const chunkBase64 = chunk.toString('base64');
-            offset += CHUNK_SIZE;
-
+        // Skip chunks from invalidated generations (barge-in)
+        if (chunk.genId === this._currentGenerationId) {
             if (this.twilioWs.readyState === WebSocket.OPEN) {
+                this._log.debug('Dripping chunk to Twilio', { queueRemaining: this._audioQueue.length, genId: chunk.genId });
                 this.twilioWs.send(JSON.stringify({
                     event: 'media',
                     streamSid: this.streamSid,
-                    media: { payload: chunkBase64 }
+                    media: { payload: chunk.data }
                 }));
             }
-            if (offset < totalBytes) setTimeout(sendChunk, 5);
-        };
+        }
 
-        sendChunk();
-        this._log.debug('Started audio delivery to Twilio', { totalBytes, chunks: Math.ceil(totalBytes / CHUNK_SIZE) });
+        // Schedule next chunk (80ms of audio dripped every 10ms = 8x speed)
+        // This is extremely steady and avoids overwhelming the socket
+        setTimeout(() => this._dripToTwilio(), 10);
     }
 
     close() {
