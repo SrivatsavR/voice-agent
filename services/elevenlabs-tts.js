@@ -305,20 +305,8 @@ export class ElevenLabsTTS {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
 
-            // Introduce subtle variations for human-like prosody 
-            // Stability Variation: +/- 0.05 (controls expressiveness consistency)
-            // Similarity Variation: +/- 0.02 (gives micro-changes in tone)
-            const stabilityVar = (Math.random() * 0.10) - 0.05;
-            const similarityVar = (Math.random() * 0.04) - 0.02;
-
             this.ws.send(JSON.stringify({
                 text: text,
-                voice_settings: {
-                    stability: 0.5 + stabilityVar,
-                    similarity_boost: 0.8 + similarityVar,
-                    style: 0.0,
-                    use_speaker_boost: true
-                },
                 try_trigger_generation: true
             }));
         } else {
