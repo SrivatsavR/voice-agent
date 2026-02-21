@@ -14,7 +14,7 @@ import { Logger } from '../utils/logger.js';
  * - Proper close sequence (flush → EOS → close)
  */
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'UrB5rVw5j9MDZWDZJtOJ';
-const MODEL_ID = 'eleven_multilingual_v2';
+const MODEL_ID = 'eleven_turbo_v2_5';
 const OUTPUT_FORMAT = 'ulaw_8000';
 
 export class ElevenLabsTTS {
@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // optimize_streaming_latency=0 for baseline stability
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=0`;
+            // optimize_streaming_latency=4 for fastest delivery
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=4`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -245,7 +245,8 @@ export class ElevenLabsTTS {
         if (this.ws) {
             this._log.info('Killing ElevenLabs stream connection due to barge-in');
             const staleWs = this.ws;
-            this.ws = null; // Important: set to null BEFORE closing to avoid handler race
+            this.ws = null;
+            this._connectPromise = null; // Reset promise to trigger fresh connection on next sendText
             this.isReady = false;
             try {
                 staleWs.close(1000, 'barge_in_interruption');
@@ -256,9 +257,6 @@ export class ElevenLabsTTS {
 
         // 3. Reset speaking state
         this._markSpeakingEnd();
-
-        // 4. Pre-connect for the next response in background
-        this._connectPromise = this._connect();
     }
 
     // ── Heartbeat ─────────────────────────────────────────────────────────
@@ -319,7 +317,7 @@ export class ElevenLabsTTS {
         if (this.isReady && this.ws?.readyState === WebSocket.OPEN) {
             // Sending empty text with flush=true tells ElevenLabs to generate now
             this.ws.send(JSON.stringify({
-                text: " ",
+                text: "",
                 try_trigger_generation: true,
                 flush: true
             }));
@@ -347,9 +345,14 @@ export class ElevenLabsTTS {
         // Chunker: Twilio prefers chunks between 20ms and 100ms.
         // 640 bytes = 80ms of Mulaw at 8kHz.
         const CHUNK_SIZE = 640;
-        for (let i = 0; i < totalBytes; i += CHUNK_SIZE) {
-            const chunk = fullBuffer.slice(i, Math.min(i + CHUNK_SIZE, totalBytes));
+        let offset = 0;
+
+        const sendChunk = () => {
+            if (offset >= totalBytes || this._closed) return;
+
+            const chunk = fullBuffer.slice(offset, Math.min(offset + CHUNK_SIZE, totalBytes));
             const chunkBase64 = chunk.toString('base64');
+            offset += CHUNK_SIZE;
 
             if (this.twilioWs.readyState === WebSocket.OPEN) {
                 this.twilioWs.send(JSON.stringify({
@@ -358,9 +361,13 @@ export class ElevenLabsTTS {
                     media: { payload: chunkBase64 }
                 }));
             }
-        }
+            // 5ms spacing ensures the network/Twilio buffer isn't slammed instantly,
+            // while still staying well ahead of real-time (80ms of audio every 5ms).
+            if (offset < totalBytes) setTimeout(sendChunk, 5);
+        };
 
-        this._log.debug('Sent audio to Twilio', { totalBytes, chunks: Math.ceil(totalBytes / CHUNK_SIZE) });
+        sendChunk();
+        this._log.debug('Started audio delivery to Twilio', { totalBytes, chunks: Math.ceil(totalBytes / CHUNK_SIZE) });
     }
 
     close() {

@@ -420,10 +420,11 @@ export function createCallSession(callerPhone = '', options = {}) {
 
         // Try to parse 'say' from whatever we've accumulated so far
         if (onSayChunk && finalOutputText) {
-          const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
-          if (match) {
-            // Language switching removed to prevent ASR teardown
-            const currentSay = match[1];
+          // Look for "say": "..." pattern. Handle opening quote through current end.
+          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+          if (sayMatch) {
+            const currentSay = sayMatch[1];
+            // Unescape common JSON characters
             const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
 
             if (unescaped.length > sentLength) {
@@ -446,7 +447,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   function markNodeDone(nodeName) {
     const match = nodeName.match(/NODE_(\d)/);
     if (match) {
-      session[`node${match[1]} _done`] = true;
+      session[`node${match[1]}_done`] = true;
     }
   }
 
@@ -500,7 +501,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         next_node: 'CONTINUE'
       }
     ],
-    'NODE_3_GST_DETAILS': [
+    'NODE_3_CONTACT_GST': [
       {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
         updates: { has_gst_number: 'yes' },
@@ -524,12 +525,13 @@ export function createCallSession(callerPhone = '', options = {}) {
     const handleBackgroundTasks = (output) => {
       if (!output || !output.updates) return;
       const updates = output.updates;
+      const currentProcId = currentProcessingId; // Snap for validation check
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
         session.bg_email_running = true;
         const candidate = updates.raw_email;
-        delete session.raw_email; // Prevent double trigger
+        delete updates.raw_email;
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
@@ -537,17 +539,18 @@ export function createCallSession(callerPhone = '', options = {}) {
             const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
             const valStr = await runTool(validateEmailTool, { email: norm.normalized_email });
             const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-            if (val?.valid) {
+
+            if (val?.valid && currentProcId === currentProcessingId) {
               session.email = val.normalized;
               session.email_valid = true;
               if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').info('Email Validated');
+                if (options.logger) options.logger.withComponent('Validation').info('[Background] Email Validated');
                 await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts, silenceFiller);
               }
-            } else {
+            } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.email_attempts = (session.email_attempts || 0) + 1;
               if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').warn('Email Invalid', val);
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', val);
                 await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
               }
             }
@@ -557,27 +560,32 @@ export function createCallSession(callerPhone = '', options = {}) {
           }
         });
       }
+
       // 2. GST
       if (updates.raw_gstin && !session.bg_gst_running) {
         session.bg_gst_running = true;
         const candidate = updates.raw_gstin;
-        delete session.raw_gstin;
+        delete updates.raw_gstin;
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
+            if (!_audioBuffer || _audioBuffer.length < 1600) { // Need at least 200ms of audio
+              throw new Error('Audio buffer too small for burst correction');
+            }
             const valStr = await runTool(validateGSTINTool, { gstin: candidate });
             const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-            if (val?.valid) {
+
+            if (val?.valid && currentProcId === currentProcessingId) {
               session.gstin = val.normalized;
               session.gstin_valid = true;
               if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').info('GST Validated');
+                if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Validated');
                 await processTranscript(`[SYSTEM: Verification done. GSTIN ${val.normalized} is valid. Move to closure.]`, tts, silenceFiller);
               }
-            } else {
+            } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.gst_attempts = (session.gst_attempts || 0) + 1;
               if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').warn('GST Invalid', val);
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] GST Invalid', val);
                 await processTranscript(`[SYSTEM: Verification failed. GSTIN invalid: ${val ? val.error : 'unknown error'}. Be helpful.]`, tts, silenceFiller);
               }
             }
@@ -587,14 +595,59 @@ export function createCallSession(callerPhone = '', options = {}) {
           }
         });
       }
-      // 3. KB
+
+      // 3. Listing Date Normalization
+      if (updates.raw_listing_start && !session.bg_listing_running) {
+        session.bg_listing_running = true;
+        const candidate = updates.raw_listing_start;
+        delete updates.raw_listing_start;
+        Promise.resolve().then(async () => {
+          try {
+            const todayISO = new Date().toISOString().split('T')[0];
+            const resStr = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
+            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
+            if (res?.valid && currentProcId === currentProcessingId) {
+              session.listing_start = res.normalized;
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
+            }
+          } catch (e) { } finally {
+            session.bg_listing_running = false;
+          }
+        });
+      }
+
+      // 4. Price Range Validation
+      if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
+        session.bg_price_running = true;
+        const pMin = parseFloat(updates.raw_price_min || session.price_min || 0);
+        const pMax = parseFloat(updates.raw_price_max || session.price_max || 0);
+        delete updates.raw_price_min;
+        delete updates.raw_price_max;
+
+        Promise.resolve().then(async () => {
+          try {
+            const resStr = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
+            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
+            if (res?.valid && currentProcId === currentProcessingId) {
+              session.price_min = res.price_min;
+              session.price_max = res.price_max;
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
+            }
+          } catch (e) { } finally {
+            session.bg_price_running = false;
+          }
+        });
+      }
+
+      // 5. KB
       if (updates.kb_query) {
         const query = updates.kb_query;
+        delete updates.kb_query;
         Promise.resolve().then(async () => {
           try {
             const kbResult = await runTool(searchKnowledgeBaseTool, { query });
-            if (isActiveCallback()) {
-              if (options.logger) options.logger.info(`[KnowledgeBase] Answer: ${query}`);
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
               await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
             }
           } catch (e) { console.error(e); }
@@ -650,7 +703,13 @@ export function createCallSession(callerPhone = '', options = {}) {
           });
         });
         if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) tts.sendText(ttsBuffer);
-        return parseAgentOutput(raw);
+
+        const parsed = parseAgentOutput(raw);
+        // Fallback: If for some reason streaming didn't send anything (but logic says it should have), send it now.
+        if (sentLength === 0 && parsed.say && !fastMatchResult && tts && isActiveCallback()) {
+          tts.sendText(parsed.say);
+        }
+        return parsed;
       } catch (e) { return null; }
     })();
 

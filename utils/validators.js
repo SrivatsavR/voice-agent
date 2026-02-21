@@ -1,5 +1,5 @@
 import { tool } from '@openai/agents';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 
 // ─── Indian State Codes for GSTIN ─────────────────────────────────────────────
 

@@ -60,8 +60,8 @@ class SilenceFillerManager {
 
     if (this._paused) return;
 
-    // Fire static phrase at 10s of mutual silence
-    this._fireTimer = setTimeout(() => this._fire(), 10000);
+    // Fire static phrase at configured mutual silence timeout
+    this._fireTimer = setTimeout(() => this._fire(), SILENCE_FILLER_TIMEOUT_MS);
   }
 
   /** Stop monitoring (call ended) */
@@ -657,10 +657,7 @@ wss.on('connection', (ws) => {
           }
         },
         onSpeechStarted: () => {
-          if (isActive && tts && !tts.isSpeaking) {
-            // Warm up TTS engine as soon as human starts speaking
-            tts.sendText(" ");
-          }
+          // Warmup removed to reduce ElevenLabs overhead
         }
       };
       if (ASR_PROVIDER === 'deepgram') {
