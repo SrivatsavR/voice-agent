@@ -578,6 +578,7 @@ wss.on('connection', (ws) => {
           // Pass tts and silenceFiller so the agent workflow can stream text chunks immediately and pause fillers
           const result = await callSession.processTranscript(transcript, tts, silenceFiller);
           callLog.withComponent('Workflow').timeEnd(timer);
+          callLog.withComponent('Workflow').debug('Processed result', { say: result.say, next_node: result.next_node, notes: result.notes });
 
 
           // Language switching removed to prevent ASR teardown (kills the stream)
@@ -651,6 +652,7 @@ wss.on('connection', (ws) => {
           silenceFiller?.reset();
 
           if (isActive && tts && tts.isSpeaking && interruptionManager.shouldProcessTranscript(partial)) {
+            currentProcessingId++; // Abort stale generation
             callLog.withComponent('User').info(`[Barge-in] Partial: ${partial}`);
             tts.clearAudio();
             silenceFiller?.pause();

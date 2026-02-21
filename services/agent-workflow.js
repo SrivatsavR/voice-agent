@@ -149,18 +149,20 @@ ${GLOBAL_GUARDRAILS}
 Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
 
 === QUESTION FLOW ===
-1. **Name**: If 'name_spoken' is missing, ask: "Aapka naam kya hai?"
-2. **Interest**: Once name is known, ask: "[name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
-3. **Bank Account**: If interested, ask: "Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai."
+- **Identify Missing Info**: Check 'name_spoken', 'interest_in_meesho', and 'has_bank_account'.
+- **Ask the next missing field**:
+  1. If NOT interested yet: Ask for interest ("...Kya aap humare saath judna chahenge?").
+  2. If interested but Name is missing: Ask "Aapka naam kya hai?" (acknowledge interest first).
+  3. If interested and Name is known, but Bank Account is missing: Ask about Bank account.
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_NAME | user provides name | Update 'name_spoken', stay in NODE_1_NAME_INTEREST and ask about Interest. |
-| INTERESTED | "yes", "theek hai", "haan" | Set interest_in_meesho: "yes", stay in NODE_1_NAME_INTEREST and ask about Bank Account. |
-| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi [name] ji, Meesho se judne ke liye dhanyavad. Have a great day!" |
+| GIVING_NAME | user provides name | Update 'name_spoken'. |
+| INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
+| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
-| EXTRA INFO | user gives price/items | Capture in 'updates_json', move to next MISSING question. |
+| EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
 
 === ROUTING ===
 - Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho' AND 'has_bank_account' are both captured.
@@ -481,16 +483,16 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon)$/i,
         updates: { interest_in_meesho: 'yes' },
         say: "Badiya! Kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai.",
-        next_node: 'NODE_2_BUSINESS_DETAILS'
+        next_node: 'CONTINUE'
       },
       {
-        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi)$/i,
+        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested)$/i,
         updates: { interest_in_meesho: 'no' },
         say: "Achha, koi baat nahi. Agar aapka mann badle toh humein zaroor batayiye. Dhanyavad!",
-        next_node: 'TERM_COMPLETE'
+        next_node: 'TERM_NOT_INTERESTED'
       }
     ],
     'NODE_2_BUSINESS_DETAILS': [
@@ -749,7 +751,7 @@ export function createCallSession(callerPhone = '', options = {}) {
 
     // Standard Path
     const finalLLMOutput = await llmPromise;
-    if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session } };
+    if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: true };
 
     if (finalLLMOutput.updates) Object.assign(session, finalLLMOutput.updates);
     handleBackgroundTasks(finalLLMOutput);

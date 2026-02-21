@@ -42,6 +42,7 @@ export class ElevenLabsTTS {
         this._isSpeaking = false;
         this._speakingEndTimer = null; // Delayed end for buffer drain
         this._expectedTwilioEndTime = 0;
+        this._currentGenerationId = 0; // Track current audio stream to avoid stale chunks
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -158,7 +159,8 @@ export class ElevenLabsTTS {
 
                 if (isCurrent) {
                     this.isReady = false;
-                    this.ws = null; // Ensure this.ws is nullified if it was the current active socket
+                    this.ws = null;
+                    this._connectPromise = null;
                     this._stopHeartbeat();
                     this._cancelSpeakingEndTimer();
                     this._markSpeakingEnd(); // Ensure speaking state is cleared
@@ -230,6 +232,7 @@ export class ElevenLabsTTS {
      */
     clearAudio() {
         this._expectedTwilioEndTime = 0;
+        this._currentGenerationId++; // Invalidate any pending audio chunks
         this._cancelSpeakingEndTimer();
 
         // 1. Clear Twilio buffer
@@ -246,13 +249,11 @@ export class ElevenLabsTTS {
             this._log.info('Killing ElevenLabs stream connection due to barge-in');
             const staleWs = this.ws;
             this.ws = null;
-            this._connectPromise = null; // Reset promise to trigger fresh connection on next sendText
+            this._connectPromise = null;
             this.isReady = false;
             try {
                 staleWs.close(1000, 'barge_in_interruption');
-            } catch (err) {
-                this._log.error('Error closing ElevenLabs stream', err);
-            }
+            } catch (err) { }
         }
 
         // 3. Reset speaking state
@@ -287,13 +288,15 @@ export class ElevenLabsTTS {
     }
 
     async sendText(text) {
-        if (!text) return;
+        if (!text || this._closed) return;
 
         // Ensure we have a valid connection
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isReady) {
-            this._log.debug('Socket not ready, waiting/reconnecting...');
             if (!this._connectPromise) {
+                this._log.debug('Socket not ready, initiating connection...');
                 this._connectPromise = this._connect();
+            } else {
+                this._log.debug('Connection attempt already in progress, waiting...');
             }
             await this._connectPromise;
         }
@@ -301,12 +304,22 @@ export class ElevenLabsTTS {
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
 
-            this.ws.send(JSON.stringify({
-                text: text,
-                try_trigger_generation: true
-            }));
+            try {
+                this.ws.send(JSON.stringify({
+                    text: text,
+                    try_trigger_generation: true
+                }));
+            } catch (err) {
+                this._log.error('Failed to send text to ElevenLabs', err);
+                this.isReady = false;
+                this._connectPromise = null;
+            }
         } else {
-            this._log.warn('Cannot send text after reconnection attempt', { ready: this.isReady, wsState: this.ws?.readyState });
+            this._log.warn('Cannot send text - TTS connection did not become ready', {
+                ready: this.isReady,
+                wsState: this.ws?.readyState,
+                hasWs: !!this.ws
+            });
         }
     }
 
@@ -344,11 +357,12 @@ export class ElevenLabsTTS {
 
         // Chunker: Twilio prefers chunks between 20ms and 100ms.
         // 640 bytes = 80ms of Mulaw at 8kHz.
-        const CHUNK_SIZE = 640;
-        let offset = 0;
+        const currentGenId = this._currentGenerationId;
 
         const sendChunk = () => {
-            if (offset >= totalBytes || this._closed) return;
+            // Stop if generation was cleared, or instance closed, or no longer speaking
+            if (this._closed || currentGenId !== this._currentGenerationId) return;
+            if (offset >= totalBytes) return;
 
             const chunk = fullBuffer.slice(offset, Math.min(offset + CHUNK_SIZE, totalBytes));
             const chunkBase64 = chunk.toString('base64');
@@ -361,8 +375,6 @@ export class ElevenLabsTTS {
                     media: { payload: chunkBase64 }
                 }));
             }
-            // 5ms spacing ensures the network/Twilio buffer isn't slammed instantly,
-            // while still staying well ahead of real-time (80ms of audio every 5ms).
             if (offset < totalBytes) setTimeout(sendChunk, 5);
         };
 

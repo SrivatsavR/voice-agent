@@ -15,14 +15,14 @@ export async function transcribeAudioBurst(buffer, options = {}) {
         language = 'hi' // Default to Hindi as per core settings
     } = options;
 
-    const url = `https://api.deepgram.com/v1/listen?model=${model}&smart_format=${smart_format}&punctuate=${punctuate}&language=${language}`;
+    const url = `https://api.deepgram.com/v1/listen?model=${model}&smart_format=${smart_format}&punctuate=${punctuate}&language=${language}&encoding=mulaw&sample_rate=8000`;
 
     try {
         const response = await fetch(url, {
             method: 'POST',
             headers: {
                 'Authorization': `Token ${apiKey}`,
-                'Content-Type': 'audio/mulaw', // Matches Twilio L16-to-mulaw codec used in this platform
+                'Content-Type': 'audio/mulaw',
             },
             body: buffer
         });
