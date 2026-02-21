@@ -32,10 +32,12 @@ The caller's words arrive via ASR (Automatic Speech Recognition). Expect:
 - Meesho is India's #1 value e-commerce platform — zero commission, zero penalty.
 - Sellers keep 100% profit. Meesho handles logistics, payments, and returns.
 - Top categories: Women's Fashion, Men's Fashion, Home & Kitchen, Beauty, Electronics Accessories.
-- Easy onboarding via Meesho Supplier Hub.
+- You are collecting their details right now on this call to start their onboarding. Do NOT redirect them to a website.
 
 === RESPONSE FORMAT ===
-You MUST return ONLY valid JSON — no other text, no wrapping, no markdown fences:
+You MUST return ONLY valid JSON — no other text, no wrapping, no markdown fences.
+CRITICAL: The "say" key MUST be the VERY FIRST key in the JSON object to enable real-time audio streaming. Do not put any other key before "say".
+Failure to return strict JSON will break the system. NEVER output conversational plain text.
 {
   "say": "text to speak aloud",
   "updates": { "key": "value" },
@@ -79,6 +81,9 @@ At all times, maintain a warm, respectful, and empathetic tone:
   • Use "ji" as an honorific when addressing the caller by name (e.g., "[name] ji").
   • Thank the caller genuinely for their time and patience.
   • Always end interactions — including refusals and callbacks — on a positive, gracious note.
+
+── 6. NEVER REDIRECT TO WEBSITE ──
+Your SOLE purpose is to collect the user's details over the phone. You MUST NOT tell the caller to sign up on the website, download the app, or use the Meesho Supplier Hub themselves. You must guide them through the questions and do it for them.
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -109,7 +114,7 @@ Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object {}.
 - Do NOT modify the welcome line. Speak it exactly.
 - Do NOT add extra questions or information.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
@@ -142,7 +147,7 @@ Step 4 — ONLY after caller expresses interest (interest_in_meesho = "yes") AND
 | WRONG PERSON | "wrong number", "I'm not the right person", "who?" | → next_node: TERM_WRONG_PERSON, set is_right_person: "no", call_outcome: "wrong_person" |
 | NOT INTERESTED | "no", "not interested", "I don't want", explicit refusal | → next_node: TERM_NOT_INTERESTED, set call_outcome: "not_interested". Say: "No problem at all, [name] ji. Thank you for your time. If you change your mind, Meesho is always here. Have a great day!" |
 | BUSY / CALL LATER | "busy", "not now", "call later", "in a meeting" | → If callback_time NOT yet captured: ask "Sure, when would be a good time to call you back?". If callback_time captured: confirm and → next_node: TERM_CALLBACK, set call_outcome: "callback" |
-| INTERESTED | "yes", "sure", "tell me more", "okay", "haan" | → set interest_in_meesho: "yes". Do NOT route yet — stay at NODE_1_NAME_INTEREST and proceed to Step 4 (bank account question). |
+| INTERESTED | "yes", "sure", "tell me more", "okay", "haan", or mentions what they sell | → set interest_in_meesho: "yes". Do NOT explain how to onboard or ask if they want to know how. Stay at NODE_1_NAME_INTEREST and proceed EXACTLY to Step 4 (bank account question). |
 | ALREADY SELLING | "I already sell on Meesho" | → Ask: "That's wonderful! We're here to help you grow further. Would you like to tell me about what you're currently selling?" → set interest_in_meesho: "yes", stay at NODE_1_NAME_INTEREST to ask Step 4 |
 | UNCLEAR | ambiguous response | → Ask ONE gentle clarifying question. Stay at NODE_1_NAME_INTEREST. |
 
@@ -168,7 +173,7 @@ If the caller expresses concerns, address them briefly:
 
 If the caller refuses to share name → set name_spoken to "Seller" and still proceed with interest pitch.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 512, store: true }
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -225,7 +230,7 @@ When the caller mentions products, you can share relevant context:
 - switch_speed_bucket: string (if not convertible, e.g. "more than a week")`,
   model: "gpt-4o-mini",
   tools: [validatePriceRangeTool],
-  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 768, store: true }
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 768, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -297,7 +302,7 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - pan_skipped: true or false`,
   model: "gpt-4o",
   tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
-  modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true }
+  modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── NODE 4: Closure ──────────────────────────────────────────────────────────
@@ -349,7 +354,7 @@ Set call_outcome: "incomplete" (if email_valid=false or critical fields are miss
 - call_outcome: "qualified" | "incomplete"
 - correction_requested: string (which field, if any)`,
   model: "gpt-4o",
-  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true }
+  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
@@ -428,7 +433,12 @@ function parseAgentOutput(rawOutput) {
     };
   } catch {
     console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
-    return { say: String(text), updates: {}, next_node: 'CONTINUE', notes: 'parse_error' };
+    return {
+      say: "I apologize, my system didn't quite catch that. Let's continue from where we left off.",
+      updates: {},
+      next_node: 'CONTINUE',
+      notes: 'parse_error'
+    };
   }
 }
 
@@ -557,6 +567,31 @@ export function createCallSession(callerPhone = '') {
     if (output.updates && typeof output.updates === 'object') {
       Object.assign(session, output.updates);
     }
+
+    // Fire-and-forget DB save
+    Promise.resolve().then(() => {
+      const hasUpdates = output.updates && Object.keys(output.updates).length > 0;
+      const hasNotes = output.notes && output.notes !== '' && output.notes !== 'parse_error';
+
+      if (hasUpdates || hasNotes) {
+        // Here we simulate an async DB call that does not block the workflow
+        // In a real implementation this would be e.g., await db.collection('calls').updateOne(...)
+        if (callSession.logger) {
+          callSession.logger.withComponent('Database').info('Saving session updates and notes asynchronously', {
+            updates: output.updates,
+            notes: output.notes
+          });
+        } else {
+          console.log('[Database] Saving session updates and notes asynchronously', { updates: output.updates, notes: output.notes });
+        }
+      }
+    }).catch(err => {
+      if (callSession.logger) {
+        callSession.logger.withComponent('Database').error('Error saving to DB', err);
+      } else {
+        console.error('[Database] Error saving to DB', err);
+      }
+    });
 
     const prevNode = currentNode;
     const nextNode = output.next_node === 'CONTINUE' ? currentNode : output.next_node;
