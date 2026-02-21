@@ -154,7 +154,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai? Minimum aur maximum batayein?"
+2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai?"
 3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?" Capture their answer in 'listing_start' (e.g., "today", "2 days", "next week").
 
 === RULES ===
@@ -210,7 +210,7 @@ ${GLOBAL_GUARDRAILS}
 Conclude the call. Inform them about the WhatsApp link. Answer any questions using the tool.
 
 === FLOW ===
-1. **Closing**: "Maine saari details note kar li hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par selling shuru kar sakte hain. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+1. **Closing**: "Maine saari details note kar li hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Onboarding tabhi complete hogi jab aap documents verify kar lenge, uske baad hi aap Meesho par selling shuru kar sakte hain. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
 2. **QnA**: If they ask anything, use 'search_knowledge_base' and ALWAYS end with: "Kya koi aur sawaal hai aapka?"
 
 === RULES ===
