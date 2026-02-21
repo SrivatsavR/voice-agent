@@ -30,10 +30,11 @@ export const searchKnowledgeBaseTool = tool({
         properties: {
             query: {
                 type: 'string',
-                description: 'The search query or question asked by the user, formatted for the vector index. Keep the query concise and focused on the core intent.'
+                description: 'The search query or question asked by the user, formatted for the vector index.'
             }
         },
-        required: ['query']
+        required: ['query'],
+        additionalProperties: false
     },
     execute: async ({ query }) => {
         try {
@@ -76,12 +77,12 @@ export const searchKnowledgeBaseTool = tool({
 
             // Compile the relevant pieces for the LLM to read and synthesize into an answer
             const combinedContext = snippets.join('\n\n---\n\n');
-            console.log(`[Vector Search] Found ${snippets.length} relevant chunks.`);
+            log.info(`Retrieved ${snippets.length} relevant context chunks from Pinecone`, snippets);
 
             return `Information from the Knowledge Base:\n${combinedContext}`;
 
         } catch (error) {
-            console.error('[Vector Search Error]:', error);
+            log.error('Knowledge Base Search Error', error);
             return "An error occurred while searching the knowledge base. Please let the user know you cannot answer right now.";
         }
     }

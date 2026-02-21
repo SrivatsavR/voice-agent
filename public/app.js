@@ -141,8 +141,15 @@ async function pollLogs() {
             let extra = '';
             if (entry.message && entry.message.includes('Generated embedding vector')) {
                 // Formatting embedding for user
-                extra = `<div class="embedding-peek">Vector Embedding: [${entry.data.join(', ')}...]</div>`;
-            } else if (entry.data && typeof entry.data === 'object') {
+                extra = `<div class="embedding-peek font-mono">Vector: [${entry.data.join(', ')}...]</div>`;
+            } else if (entry.message && entry.message.includes('Retrieved') && Array.isArray(entry.data)) {
+                // Formatting retrieved chunks
+                extra = entry.data.map(snip => `
+                    <div class="mt-2 p-2 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-[10px] text-indigo-200/70 italic">
+                        "${snip.substring(0, 200)}${snip.length > 200 ? '...' : ''}"
+                    </div>
+                `).join('');
+            } else if (entry.data && typeof entry.data === 'object' && !Array.isArray(entry.data)) {
                 extra = `<div class="text-[9px] text-white/20 font-mono ml-2 mt-0.5">${JSON.stringify(entry.data)}</div>`;
             }
 
