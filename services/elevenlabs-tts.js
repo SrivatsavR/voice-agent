@@ -89,8 +89,8 @@ export class ElevenLabsTTS {
                 };
 
                 // Initialize with BOS (Beginning of Stream) message
+                // NOTE: We do NOT send text: " " here anymore as it generates 1s+ of silence leading audio
                 this.ws.send(JSON.stringify({
-                    text: " ",
                     voice_settings: voiceSettings
                 }));
 
