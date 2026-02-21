@@ -82,7 +82,7 @@ export class ElevenLabsTTS {
                 // Lower chunk_length_schedule for faster time-to-first-byte (min ~20, sweet spot 30)
                 this.ws.send(JSON.stringify({
                     text: " ",
-                    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+                    voice_settings: { stability: 0.7, similarity_boost: 0.8 },
                     generation_config: { chunk_length_schedule: [50] }
                 }));
 
