@@ -112,7 +112,8 @@ function updateVariables(session) {
         { key: 'price_max', label: 'Max Price', icon: 'tag' },
         { key: 'listing_start', label: 'Listing Readiness', icon: 'calendar' },
         { key: 'email', label: 'Email ID', icon: 'mail' },
-        { key: 'gstin', label: 'GST Number', icon: 'shield-check' }
+        { key: 'gstin', label: 'GST Number', icon: 'shield-check' },
+        { key: 'uin', label: 'UIN / Enrollment ID', icon: 'file-text' }
     ];
 
     sessionVariables.innerHTML = '';

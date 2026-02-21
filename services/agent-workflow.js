@@ -122,9 +122,9 @@ ${GLOBAL_GUARDRAILS}
 Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates' and move to the next MISSING question.
 
 === QUESTION FLOW ===
-1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Aapka naam kya hai?"
+1. **Name**: If 'name_spoken' is missing, ask: "Namaste! Main jaan sakti hoon aapka naam kya hai?"
 2. **Interest**: Once name is known, ask: "Ji [name] ji, Meesho par aap zero commission par apne items bech sakte hain. Kya aap humare saath judna chahenge?"
-3. **Bank Account**: If interested, ask: "Zaroor! Kya aapke paas active bank account hai? Payment ke liye ye zaroori hai."
+3. **Bank Account**: If interested, ask: "Ek choti si baat, kya aapke paas ek active bank account hai? Payments ke liye ye zaroori hota hai."
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -154,8 +154,8 @@ ${DATA_INTERPRETATION_CONTEXT}
 Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentioned items or price range, do NOT ask for them. Capture any remaining info.
 
 === QUESTION FLOW ===
-1. **Items**: If 'products_sold' is empty, ask: "Aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai?"
+1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
+2. **Price**: If 'price_min' is missing, ask: "Aur in items ki price range kya rehti hai?"
 3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
    - When they answer, use **normalize_listing_date** tool to convert their spoken timing into YYYY-MM-DD.
    - Use the current date from the system context as reference.
@@ -184,19 +184,22 @@ ${DATA_INTERPRETATION_CONTEXT}
 Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing, ask: "Aapka email address kya hai?"
-2. **GST**: If 'gstin' is missing, ask: "Kya aapke paas GST number hai?"
+1. **Email**: If 'email' is missing, ask: "Kya aap apna email address bata sakte hai?"
+2. **GST**: If 'gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas GST number hai?"
+3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
 | GIVING_EMAIL | user provides email | 1. Call normalize_spoken_email. 2. Call validate_email. 3. Update 'email' and 'email_valid' in 'updates'. |
 | GIVING_GST | user provides GST/UIN | 1. Call validate_gstin. 2. Update 'gstin' and 'gstin_valid' in 'updates'. If invalid, increment 'gst_attempts'. |
-| SKIP_GST | "don't have it", "skip" | Set 'gst_skipped': true, move to Node 4. |
+| NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates'. Ask for UIN/Enrollment ID. |
+| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates', move to Node 4. |
+| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
 === ROUTING ===
-- Stay in NODE_3 until Email and GST (or skipped) are fully captured and validated.
-- Note: If user fails GST 2 times, move to NODE_4 anyway and note it in 'notes'.
+- Stay in NODE_3 until Email and (GST OR UIN) are fully captured.
+- Note: If user fails GST 2 times, mark 'gst_declined': true and ask for UIN.
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o",
@@ -240,6 +243,7 @@ export const TERMINAL_NODES = new Set([
   'TERM_CALLBACK',
   'TERM_WRONG_PERSON',
   'TERM_COMPLETE',
+  'TERM_NO_REGISTRATION'
 ]);
 
 // ─── Default Session State ────────────────────────────────────────────────────
@@ -265,7 +269,8 @@ const DEFAULT_SESSION = {
   email_attempts: 0,
   gstin: '',
   gstin_valid: false,
-  gst_skipped: false,
+  gst_declined: false,
+  uin: '',
   gst_attempts: 0,
   pan_number: '',
   pan_skipped: false,
