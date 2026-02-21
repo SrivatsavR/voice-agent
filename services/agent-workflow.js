@@ -559,7 +559,13 @@ export function createCallSession(callerPhone = '', options = {}) {
                 await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
               }
             }
-          } catch (e) { console.error(e); } finally {
+          } catch (e) {
+            console.error(e);
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              if (options.logger) options.logger.withComponent('Validation').error('[Background] Email check crashed', e);
+              await processTranscript(`[SYSTEM: Verification failed due to internal tool error. Ask for email again politely.]`, tts, silenceFiller);
+            }
+          } finally {
             session.bg_email_running = false;
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
@@ -594,7 +600,13 @@ export function createCallSession(callerPhone = '', options = {}) {
                 await processTranscript(`[SYSTEM: Verification failed. GSTIN invalid: ${val ? val.error : 'unknown error'}. Be helpful.]`, tts, silenceFiller);
               }
             }
-          } catch (e) { console.error(e); } finally {
+          } catch (e) {
+            console.error(e);
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              if (options.logger) options.logger.withComponent('Validation').error('[Background] GST check crashed', e);
+              await processTranscript(`[SYSTEM: Verification failed due to internal tool error. Apologize and ask for GST again.]`, tts, silenceFiller);
+            }
+          } finally {
             session.bg_gst_running = false;
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
@@ -615,7 +627,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.listing_start = res.normalized;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
             }
-          } catch (e) { } finally {
+          } catch (e) {
+            console.error(e);
+            if (options.logger) options.logger.withComponent('Validation').error('[Background] Listing Date tool crashed', e);
+          } finally {
             session.bg_listing_running = false;
           }
         });
@@ -638,7 +653,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
             }
-          } catch (e) { } finally {
+          } catch (e) {
+            console.error(e);
+            if (options.logger) options.logger.withComponent('Validation').error('[Background] Price Range tool crashed', e);
+          } finally {
             session.bg_price_running = false;
           }
         });
@@ -655,7 +673,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
               await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
             }
-          } catch (e) { console.error(e); }
+          } catch (e) {
+            console.error(e);
+            if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
+          }
         });
       }
     };
