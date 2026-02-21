@@ -14,7 +14,7 @@ import { Logger } from '../utils/logger.js';
  * - Proper close sequence (flush → EOS → close)
  */
 const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'UrB5rVw5j9MDZWDZJtOJ';
-const MODEL_ID = 'eleven_turbo_v2_5';
+const MODEL_ID = 'eleven_multilingual_v2';
 const OUTPUT_FORMAT = 'ulaw_8000';
 
 export class ElevenLabsTTS {
@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // optimize_streaming_latency=1 is the sweet spot for stability and TTFB
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=1`;
+            // optimize_streaming_latency=0 for baseline stability
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=0`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
@@ -89,8 +89,9 @@ export class ElevenLabsTTS {
                 };
 
                 // Initialize with BOS (Beginning of Stream) message
-                // NOTE: We do NOT send text: " " here anymore as it generates 1s+ of silence leading audio
+                // Sending a space helps 'warm up' the engine/bridge
                 this.ws.send(JSON.stringify({
+                    text: " ",
                     voice_settings: voiceSettings
                 }));
 
@@ -328,11 +329,11 @@ export class ElevenLabsTTS {
     _sendToTwilio(audioBase64) {
         if (!audioBase64 || audioBase64.length === 0) return;
 
-        // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
-        const pcmBuffer = Buffer.from(audioBase64, 'base64');
-        this._log.debug('Sent audio chunk to Twilio', { bytes: pcmBytes });
-        const chunkDurationMs = (pcmBytes / 8000) * 1000;
+        const fullBuffer = Buffer.from(audioBase64, 'base64');
+        const totalBytes = fullBuffer.length;
 
+        // Exact byte calculation for ulaw_8000: 8000 bytes = 1000ms
+        const chunkDurationMs = (totalBytes / 8000) * 1000;
         const now = Date.now();
         if (this._expectedTwilioEndTime < now) {
             this._expectedTwilioEndTime = now + chunkDurationMs;
@@ -340,17 +341,26 @@ export class ElevenLabsTTS {
             this._expectedTwilioEndTime += chunkDurationMs;
         }
 
-        // Add 500ms buffer for minor network jitter
         const timeUntilEnd = this._expectedTwilioEndTime - now;
         this._scheduleSpeakingEnd(timeUntilEnd + 500);
 
-        if (this.twilioWs.readyState === WebSocket.OPEN) {
-            this.twilioWs.send(JSON.stringify({
-                event: 'media',
-                streamSid: this.streamSid,
-                media: { payload: audioBase64 }
-            }));
+        // Chunker: Twilio prefers chunks between 20ms and 100ms.
+        // 640 bytes = 80ms of Mulaw at 8kHz.
+        const CHUNK_SIZE = 640;
+        for (let i = 0; i < totalBytes; i += CHUNK_SIZE) {
+            const chunk = fullBuffer.slice(i, Math.min(i + CHUNK_SIZE, totalBytes));
+            const chunkBase64 = chunk.toString('base64');
+
+            if (this.twilioWs.readyState === WebSocket.OPEN) {
+                this.twilioWs.send(JSON.stringify({
+                    event: 'media',
+                    streamSid: this.streamSid,
+                    media: { payload: chunkBase64 }
+                }));
+            }
         }
+
+        this._log.debug('Sent audio to Twilio', { totalBytes, chunks: Math.ceil(totalBytes / CHUNK_SIZE) });
     }
 
     close() {
