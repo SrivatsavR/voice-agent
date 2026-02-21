@@ -29,7 +29,7 @@ You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You r
   - Use "start" or "shuru" instead of "aarambh".
   - Use "profit" or "fayda" instead of "laabh".
   - Use "link" instead of "strot".
-- **NUMBERS RULE**: Speak ALL numbers, prices, and IDs in **ENGLISH digits**.
+- **NUMBERS RULE**: You MUST write ALL numbers using English words (e.g., "fourteen", "two hundred", "10") so the text-to-speech engine pronounces them correctly in English. NEVER use Hindi words for numbers (e.g., avoid "chaudah", "sau", "hazaar").
 - **SENTENCE STRUCTURE**: Keep Hindi sentences short. Use "Hinglish".
 - **CRISP QUESTIONS**: Do NOT explain why you are asking. Just ask the question directly. No preamble like "To register you, I need..." or "For payments...".
 - **ENDING RULE**: EVERY response ("say" field) MUST end with exactly ONE clear question. NEVER leave a response open-ended.
@@ -126,16 +126,16 @@ const welcomeAgent = new Agent({
   instructions: `${BASE_VOICE_CONTEXT}
 
 === YOUR TASK ===
-  Deliver the welcome greeting exactly as scripted.Do NOT ask any questions.Do NOT engage in conversation.
+  Deliver the welcome greeting exactly as scripted. Do NOT ask any questions. Do NOT engage in conversation.
 
 Say verbatim:
-"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya main aapka naam jaan sakti hoon?"
+"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon."
 
-Set next_node to "NODE_1_NAME_INTEREST".Leave updates as empty object { }.
+Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object { }.
 
 === IMPORTANT ===
-  - Do NOT modify the welcome line.Speak it exactly.
-- Do NOT add extra questions or information.`,
+  - Do NOT modify the welcome line. Speak it exactly.
+  - Do NOT add extra questions or information.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true, response_format: RESPONSE_SCHEMA }
 });
@@ -153,7 +153,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - **Identify Missing Info**: Check 'name_spoken', 'interest_in_meesho', and 'has_bank_account'.
 - **Ask the next missing field**:
   1. If Name is missing: Ask "Aapka naam kya hai?".
-  2. If Name is known but NOT interested yet: Give the pitch ("Meesho par 14 crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
+  2. If Name is known but NOT interested yet: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
   3. If interested and Name is known, but Bank Account is missing: Ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
@@ -377,6 +377,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   const conversationHistory = [];
   const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
   let currentNode = 'NODE_0_WELCOME';
+  let currentProcessingId = 0;
 
   const runner = new Runner({
     traceMetadata: {
@@ -466,7 +467,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Kya main aapka naam jaan sakti hoon?";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
   }
 
   // --- Regex Fast-Path Configuration ---
@@ -478,7 +479,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           const name = match[2].trim();
           return {
             updates: { name_spoken: name },
-            say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap humare saath judna chahenge?`,
+            say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap humare saath judna chahenge?`,
             next_node: 'CONTINUE'
           };
         }
@@ -515,6 +516,8 @@ export function createCallSession(callerPhone = '', options = {}) {
   };
 
   async function processTranscript(transcript, tts = null, silenceFiller = null) {
+    currentProcessingId++;
+    const currentProcId = currentProcessingId;
     const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!]/g, '');
     let fastMatchResult = null;
 
@@ -528,7 +531,6 @@ export function createCallSession(callerPhone = '', options = {}) {
     const handleBackgroundTasks = (output) => {
       if (!output || !output.updates) return;
       const updates = output.updates;
-      const currentProcId = currentProcessingId; // Snap for validation check
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
