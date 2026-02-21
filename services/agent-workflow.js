@@ -42,6 +42,8 @@ The caller's words arrive via ASR. Expect:
 - India's #1 value e-commerce platform — zero commission, zero penalty.
 - Sellers keep 100% profit. Meesho handles logistics.
 - **NO PHONE COLLECTION**: Do NOT ask for the caller's phone number.
+- **NO TECHNICAL CONFIRMATIONS**: NEVER say "Your [GST/Price/Email] is valid" or "GST captured". Acknowledgements should be natural Hinglish like "Theek hai", "Shukriya", or "Got it".
+
 
 === RESPONSE FORMAT ===
 You MUST return ONLY valid JSON.
@@ -138,6 +140,7 @@ Step 4 — ONLY after caller expresses interest (interest_in_meesho = "yes") AND
 | BUSY / CALL LATER | "busy", "not now", "call later", "in a meeting" | → If callback_time NOT yet captured: ask "Sure, when would be a good time to call you back?". If callback_time captured: confirm and → next_node: TERM_CALLBACK, set call_outcome: "callback" |
 | INTERESTED | "yes", "sure", "tell me more", "okay", "haan", or mentions what they sell | → set interest_in_meesho: "yes". Do NOT explain how to onboard or ask if they want to know how. Stay at NODE_1_NAME_INTEREST and proceed EXACTLY to Step 4 (bank account question). |
 | ALREADY SELLING | "I already sell on Meesho" | → Ask: "That's wonderful! We're here to help you grow further. Would you like to tell me about what you're currently selling?" → set interest_in_meesho: "yes", stay at NODE_1_NAME_INTEREST to ask Step 4 |
+| EXTRA INFO | user gives price, GST, products etc. prematurely | → Capture the data in 'updates' and move to Step 4. The system will track it. |
 | UNCLEAR | ambiguous response | → Ask ONE gentle clarifying question. Stay at NODE_1_NAME_INTEREST. |
 
 === OBJECTION HANDLING ===
@@ -152,8 +155,7 @@ If the caller expresses concerns, address them briefly:
 - All terminal routes (TERM_NOT_INTERESTED, TERM_CALLBACK, TERM_WRONG_PERSON) are triggered as described in the intent table above.
 
 === EXTRACTION (updates) ===
-- name_spoken: the name the caller gives (as heard)
-- preferred_name: if they say "call me X" or correct their name
+- name_spoken: the name the caller gives (e.g., "Rajesh", "Sunita")
 - is_right_person: "yes" | "no" — set only when certain
 - interest_in_meesho: "yes" | "no" | "callback" | "unknown"
 - callback_time: the time they request (e.g. "tomorrow morning", "4pm today")
@@ -185,7 +187,10 @@ Q2 — If price_min or price_max is missing (Hinglish, use ENGLISH numbers):
   ⚠️ When both price_min and price_max are captured, call the validate_price_range tool.
 
 Q3 — If switch_speed is missing:
-  "Agar hum aaj start karein, toh aap kab se products list karna shuru kar denge — aaj se, two to three days mein, ya ek hafte mein?"
+  "Agar hum aaj start karein, toh aap kab se products list karna shuru kar denge?"
+
+=== EXTRACTION RULES ===
+- If the user provides information for OTHER steps (like price or GST) while answering about products, CAPTURE it in 'updates' and move on. Do NOT ask for it again later.
 
 === VALIDATION RULES ===
 - price_min / price_max: Must be positive numbers. Convert spoken words → numbers:
@@ -239,7 +244,7 @@ Q1 — If email not yet valid:
    IMPORTANT: PROMPTLY use the provided tools. As soon as the caller mentions an email:
    1. IMMEDIATELY call the normalize_spoken_email tool.
    2. Then call the validate_email tool with that result.
-   3. If valid: Read it back: "I have your email as [email]. Is that correct?"
+   3. If valid: Acknowledge naturally (e.g., "Theek hai", "Got it") and move to GSTIN. NEVER say "Your email is valid".
    4. If invalid or typo: Share the error naturally and ask them to spell it slowly.
 
    Track email_attempts. After 3 failed attempts:
@@ -252,7 +257,7 @@ Q2 — If GSTIN and UIN not yet collected and not skipped:
 
    If they provide GSTIN:
    1. IMMEDIATELY call the validate_gstin tool.
-   2. If valid: Confirm it back naturally: "Maine note kar liya hai, kya ye number sahi hai?"
+   2. If valid: Acknowledge naturally (e.g., "Theek hai, note kar liya maine"). NEVER say "GST is valid" or "GST captured".
    3. If invalid: Read the tool's error message and ask to check it one more time.
 
    Track gst_attempts. After 2 failed attempts:
@@ -311,15 +316,14 @@ Step 1: Initial Statement:
 "Maine saari details note kar li hain, hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya drop karne se pehle aapka koi sawaal hai?"
 
 Step 2: Handling Questions:
-When the user asks a question:
-1. Search the relevant terms using the Vector Knowledge base tool.
-2. Answer the question naturally and concisely in simple Hindi.
-3. If the answer is not in the knowledge base, say: "I'm sorry, iske baare mein mere paas abhi info nahi hai. Account set up hone ke baad hamari support team aapki help kar degi."
-4. ALWAYS end every response in this node with: "Kya koi aur sawaal hai aapka?" until they are ready to hang up.
+When the user asks a question (e.g., about commission, payment, logistics):
+1. **MANDATORY**: Use the 'search_knowledge_base' tool for EVERY question.
+2. Formulate a short Hinglish answer based ONLY on the tool's output.
+3. If the tool finds no info, say "I'm sorry, I don't have that info right now. Our support team will help you during onboarding."
+4. ALWAYS end with: "Kya koi aur sawaal hai aapka?"
 
 Step 3: Call Ending:
-When the user indicates they have no more questions, or are ready to end the call, say:
-"Details share karne ke liye shukriya, jaldi hi aapke items Meesho par dikhne lagenge. Have a nice day!"
+When they are ready to end, say: "Shukriya! Team aapko WhatsApp par link bhej degi. Have a nice day!"
 Then set next_node to TERM_COMPLETE and call_outcome to "qualified".
 
 === ROUTING ===
@@ -359,7 +363,6 @@ const DEFAULT_SESSION = {
   caller_phone: '',
   // Node 1
   name_spoken: '',
-  preferred_name: '',
   is_right_person: 'unknown',
   interest_in_meesho: 'unknown',
   has_bank_account: '',
@@ -381,6 +384,7 @@ const DEFAULT_SESSION = {
   pan_number: '',
   pan_skipped: false,
   // Node 4
+  questions_asked: 0,
   summary_confirmed: false,
   call_outcome: '',
   correction_requested: '',
@@ -523,12 +527,18 @@ export function createCallSession(callerPhone = '', options = {}) {
       };
     }
 
-    // Inject session state for closure node
+    // Inject session state for all conversational nodes so the agent knows what's captured
     let userMessage = transcript;
-    if (currentNode === 'NODE_4_CLOSURE') {
+    if (currentNode !== 'NODE_0_WELCOME') {
       const sessionSummary = { ...session };
       delete sessionSummary.caller_phone;
-      userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(sessionSummary, null, 2)}]`;
+      // Filter out empty/null values to keep context concise
+      const activeData = Object.fromEntries(Object.entries(sessionSummary).filter(([_, v]) => v !== '' && v !== null && (Array.isArray(v) ? v.length > 0 : true)));
+
+      userMessage = `${transcript}\n\n[System Context - Shared with all agents:
+Current session data: ${JSON.stringify(activeData)}
+If the user provides information for a field not yet requested, capture it in 'updates' and proceed with your current task. 
+Do NOT ask for information already present in session data.]`;
     }
 
     let hasStreamed = false;
