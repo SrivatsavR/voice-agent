@@ -13,7 +13,7 @@ import { Logger } from '../utils/logger.js';
  * - Reconnect support for dropped connections
  * - Proper close sequence (flush → EOS → close)
  */
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'UrB5rVw5j9MDZWDZJtOJ';
+const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'OTiKmbPsHxZkwedBE4Cp';
 const MODEL_ID = 'eleven_flash_v2_5';
 const OUTPUT_FORMAT = 'ulaw_8000';
 

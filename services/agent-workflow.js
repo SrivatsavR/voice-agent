@@ -6,6 +6,7 @@ import {
   validatePhoneTool,
   validatePriceRangeTool
 } from '../utils/validators.js';
+import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
 // ─── Core Voice Context (injected into every node) ────────────────────────────
 const BASE_VOICE_CONTEXT = `
@@ -261,9 +262,9 @@ Q1 — If email not yet valid:
     Say: "No worries, we can collect your email via SMS after this call."
     Set email_valid: false, move to GSTIN.
 
---- GSTIN COLLECTION ---
-Q2 — If GSTIN not yet collected and not skipped:
-  "Do you have a GST number? If so, please read it out slowly — I'll take it down group by group."
+--- GSTIN / UIN COLLECTION ---
+Q2 — If GSTIN and UIN not yet collected and not skipped:
+  "Do you have a GST number? If so can you share it, if you don't have GST do you have a UIN or enrollment ID?"
 
   If they provide GSTIN:
   1. Call the validate_gstin tool with the spoken GSTIN.
@@ -274,11 +275,14 @@ Q2 — If GSTIN not yet collected and not skipped:
     Say: "That's alright, our team can help you verify your GST details after onboarding."
     Set gstin_valid: false, move on.
 
-  If caller says no GST / not registered / exempt:
-    Set gstin: null, gst_skipped: true
+  If they provide a UIN or Enrollment ID:
+    Set uin_or_enrollment_id: <the exact ID they mentioned>, set gst_skipped: true.
+
+  If caller says no GST/UIN / not registered / exempt:
+    Set gstin: null, uin_or_enrollment_id: null, gst_skipped: true
     Say: "That's perfectly fine! On Meesho, you can start selling without GST if your annual turnover is below 40 lakhs. We can always add it later."
 
---- PAN CARD (for non-GST sellers) ---
+--- PAN CARD (for sellers with neither GST nor UIN) ---
 Q3 — If gst_skipped=true AND pan_number is empty:
   "Since you don't have GST, could you share your PAN card number? It's needed for verification."
   - PAN format: 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F)
@@ -288,7 +292,7 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - If caller says busy / callback / asks to be called later at ANY point → IMMEDIATELY apply Guardrail 4 (Callback Accommodation): ask for preferred callback time, confirm, then set next_node: TERM_CALLBACK, call_outcome: "callback".
 - If caller goes off-topic at ANY point → apply Guardrail 2 (Off-Topic Deflection): one polite redirect, then resume the current email or GSTIN question. Do NOT route away.
 - If you cannot understand the caller's email or GSTIN after the maximum allowed attempts → apply Guardrail 3 (Confusion & Apology): apologise, skip the field gracefully, and continue.
-- If email collected (valid or skipped) AND (GSTIN valid OR gst_skipped) → next_node: NODE_4_CLOSURE
+- If email collected (valid or skipped) AND (GSTIN valid OR uin_or_enrollment_id is set OR gst_skipped) → next_node: NODE_4_CLOSURE
 - Otherwise → next_node: NODE_3_CONTACT_GST
 
 === EXTRACTION (updates) ===
@@ -297,6 +301,7 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - email_attempts: number (increment on each failed attempt)
 - gstin: string or null
 - gstin_valid: true or false
+- uin_or_enrollment_id: string or null
 - gst_skipped: true or false
 - gst_attempts: number (increment on each failed attempt)
 - pan_number: string or null
@@ -306,56 +311,43 @@ Q3 — If gst_skipped=true AND pan_number is empty:
   modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true, response_format: { type: "json_object" } }
 });
 
-// ─── NODE 4: Closure ──────────────────────────────────────────────────────────
+// ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `${BASE_VOICE_CONTEXT}
 ${GLOBAL_GUARDRAILS}
 
 === YOUR TASK ===
-You are closing the Meesho seller qualification call. Summarize everything collected, get confirmation, handle corrections, and provide clear next steps.
+You are concluding the Meesho seller qualification call. 
+You must inform the caller that the team will send a WhatsApp link for document verification and politely ask if they have any questions before they drop off.
+If they ask questions, you will answer them. Once they have no more questions, thank them and end the call.
 
-The current session data will be provided in the user message. Use it to build your summary.
+=== CONVERSATION FLOW ===
+Step 1: Initial Statement (Speak this exactly when first entering this node, before answering any questions):
+"I have collected all the details we need, our team will send you a link on WhatsApp to upload documents to complete verification. Do you have any questions before that?"
 
-=== SUMMARY TO SPEAK ===
-Read back the following naturally (do NOT read as a list — weave into conversational sentences):
-1. Name (use preferred_name if available, else name_spoken)
-2. Products they sell
-3. Price range ("from ₹[min] to ₹[max]")
-4. How quickly they can start listing
-5. Email address (read it out fully)
-6. GSTIN — mask the middle: show first 2 and last 3 characters only (e.g. "27 star star star Z5")
-   If gst_skipped=true → say "GST details to be provided later"
-   If pan_number is available → "PAN card on file"
+Step 2: Handling Questions:
+When the user asks a question:
+1. Answer the question naturally, accurately, and concisely (Wait for the Knowledge Base Vector DB tool to be added to answer these inquiries).
+2. After answering, always ask: "Do you have any other questions?"
 
-Example summary:
-"So to confirm, [name] ji — you sell kurtis and sarees in the ₹200 to ₹800 range, and you can start listing within 2 to 3 days. Your email is rohit at gmail dot com, and your GST number ends in Z5. Is all of that correct?"
+Step 3: Call Ending:
+When the user indicates they have no more questions, are satisfied, or are ready to end the call, say EXACTLY verbatim:
+"Thank you for sharing your details, looking forward to getting you listed on Meesho soon."
+Then set next_node to TERM_COMPLETE and call_outcome to "qualified".
 
-Then ask: "Is everything correct, or would you like to change anything?"
-
-=== CORRECTION FLOW ===
-- Wants to fix email or GSTIN → next_node: NODE_3_CONTACT_GST
-  Say: "Sure, let me take that again."
-- Wants to fix products, price, or switch speed → next_node: NODE_2_DETAILS
-  Say: "Of course, let me update those details."
-- Confirms everything is correct → proceed to next steps.
-- If caller goes off-topic at ANY point → apply Guardrail 2: one polite redirect back to the summary confirmation.
-- If caller says they are busy / wants a callback → apply Guardrail 4: get callback time, confirm, set next_node: TERM_CALLBACK.
-- If you are confused about a correction request → apply Guardrail 3: apologise once, ask the caller to clarify which detail to change.
-
-=== NEXT STEPS (speak after confirmation) ===
-Say: "Wonderful, [name] ji! You will shortly receive a link on WhatsApp to verify your documents. Once your documents are verified, you will be fully onboarded on Meesho and ready to start selling to crores of customers. If you need any help along the way, our seller support team is always a call away. Thank you so much for your time and welcome to the Meesho family!"
-
-Set next_node: TERM_COMPLETE
-Set call_outcome: "qualified" (if email_valid=true and key fields are present)
-Set call_outcome: "incomplete" (if email_valid=false or critical fields are missing)
+=== ROUTING ===
+- Keep next_node as NODE_4_CLOSURE while answering questions.
+- If caller says busy / callback / asks to be called later at ANY point → IMMEDIATELY apply Guardrail 4 (Callback Accommodation): ask for preferred callback time, confirm, then set next_node: TERM_CALLBACK.
+- Once the user indicates they have no more questions → next_node: TERM_COMPLETE.
 
 === EXTRACTION (updates) ===
-- summary_confirmed: true or false
-- call_outcome: "qualified" | "incomplete"
-- correction_requested: string (which field, if any)`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true, response_format: { type: "json_object" } }
+- call_outcome: "qualified"
+- questions_asked: increment this number anytime the user asks a distinct question.`,
+  // We recommend explicitly moving to gpt-4o for strictly following tool and instruction guidelines in the RAG step
+  model: "gpt-4o",
+  tools: [searchKnowledgeBaseTool],
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 1024, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
