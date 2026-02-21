@@ -11,6 +11,7 @@ export class DeepgramASR {
         this._maxReconnectAttempts = 5;
         this._keepaliveInterval = null;
         this._utteranceBuffer = '';
+        this._audioBuffer = []; // To store raw audio for the current utterance
         this._connectTimeout = null;
         this._flushTimeout = null;
         this.options = options;
@@ -124,8 +125,12 @@ export class DeepgramASR {
             this._flushTimeout = null;
         }
         if (this._utteranceBuffer.trim()) {
-            this.onTranscript?.(this._utteranceBuffer.trim());
+            const fullAudio = Buffer.concat(this._audioBuffer);
+            this.onTranscript?.(this._utteranceBuffer.trim(), fullAudio);
             this._utteranceBuffer = '';
+            this._audioBuffer = [];
+        } else {
+            this._audioBuffer = []; // Just clear if nothing to say
         }
     }
 
@@ -184,6 +189,7 @@ export class DeepgramASR {
         }
         try {
             const buffer = Buffer.from(base64Audio, 'base64');
+            this._audioBuffer.push(buffer); // Save for REST burst
             this.ws.send(buffer);
         } catch { }
     }

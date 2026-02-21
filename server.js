@@ -5,6 +5,8 @@ import http from 'http';
 import twilio from 'twilio';
 import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { DeepgramASR } from './services/deepgram-asr.js';
+import { transcribeAudioBurst } from './utils/deepgram-rest.js';
+import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from './utils/validators.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
@@ -502,13 +504,51 @@ wss.on('connection', (ws) => {
       });
 
       // Transcript handler (shared between ASR providers)
-      const onTranscript = async (transcript) => {
+      const onTranscript = async (transcript, audioBuffer = null) => {
+        if (!transcript?.trim()) return;
+        const myProcessingId = ++currentProcessingId;
+
         try {
-          if (!transcript?.trim() || !isActive) return;
+          // --- Background "Burst" Correction ---
+          // If we are in GST or Email nodes, send the raw audio to Deepgram REST for a "second opinion" (high accuracy)
+          const currentNode = callSession?.getCurrentNode();
+          if (audioBuffer && (currentNode === 'NODE_3_CONTACT_GST' || transcript.match(/[A-Z0-9]{10,}/i) || transcript.includes('@'))) {
+            Promise.resolve().then(async () => {
+              try {
+                const burst = await transcribeAudioBurst(audioBuffer, { language: 'hi' }); // Best for Hinglish
+                if (burst?.transcript && burst.transcript.toLowerCase() !== transcript.toLowerCase()) {
+                  callLog.withComponent('Validation').info(`[Burst Correction] REST Result: "${burst.transcript}" (Streaming was: "${transcript}")`);
 
-          const myProcessingId = ++currentProcessingId;
+                  const sess = callSession.getSession();
+                  const cleanedBurst = burst.transcript.replace(/[\s\-]/g, '').toUpperCase();
 
-          // 1. Interruption gate check
+                  // If it looks like a GST (15 chars)
+                  if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
+                    const valStr = await validateGSTINTool.execute({ gstin: cleanedBurst });
+                    const val = JSON.parse(valStr);
+                    if (val.valid) {
+                      sess.gstin = val.normalized;
+                      sess.gstin_valid = true;
+                      callLog.withComponent('Validation').info(`[Burst Success] Corrected GSTIN from burst: ${val.normalized}`);
+                    }
+                  }
+                  // If it looks like an email
+                  else if (burst.transcript.includes('@') || burst.transcript.includes(' at ')) {
+                    const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: burst.transcript });
+                    const norm = JSON.parse(normStr);
+                    const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
+                    const val = JSON.parse(valStr);
+                    if (val.valid) {
+                      sess.email = val.normalized;
+                      sess.email_valid = true;
+                      callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${val.normalized}`);
+                    }
+                  }
+                }
+              } catch (e) { }
+            });
+          }
+          // --- End Burst Correction ---
           const wasSpeaking = tts?.isSpeaking;
           if (!interruptionManager.shouldProcessTranscript(transcript)) {
             // Even if dropped, it's human voice activity, so reset the 7s countdown
@@ -615,62 +655,6 @@ wss.on('connection', (ws) => {
             callLog.withComponent('User').info(`[Barge-in] Partial: ${partial}`);
             tts.clearAudio();
             silenceFiller?.pause();
-          }
-
-          // EARLY STREAMING EXTRACTION FOR GST & EMAIL
-          const currNode = callSession?.getCurrentNode();
-          if (currNode === 'NODE_3_CONTACT_GST') {
-            const sess = callSession.getSession();
-            // Check for potential GST pattern
-            if (!sess.gstin_valid && sess.gst_attempts < 2) {
-              const cleaned = partial.replace(/[\s\-]/g, '').toUpperCase();
-              const weakMatch = cleaned.match(/[A-Z0-9]{15,}/i);
-              if (weakMatch && !sess.bg_gst_running) {
-                sess.bg_gst_running = true;
-                const candidate = weakMatch[0];
-                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found potential GSTIN: ${candidate}, running background validation.`);
-
-                Promise.resolve().then(async () => {
-                  try {
-                    // Extract validation logic without relying on the wrapper's .execute that fails
-                    const valStr = await validateGSTINTool({ gstin: candidate }) || await validateGSTINTool.execute?.({ gstin: candidate }) || await validateGSTINTool.function?.({ gstin: candidate });
-                    const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-                    if (val.valid) {
-                      sess.gstin = val.normalized;
-                      sess.gstin_valid = true;
-                      callLog.withComponent('Validation').info(`[Background] Validated Live Stream GSTIN: ${val.normalized}`);
-                    }
-                  } catch (e) { }
-                  // We don't reset bg_gst_running to true if valid so we don't spam. If invalid, allow retry if they keep speaking?
-                  // Just let it be for the utterance lifecycle.
-                  if (!sess.gstin_valid) sess.bg_gst_running = false;
-                });
-              }
-            }
-            // Basic early catch for emails
-            if (!sess.email_valid && sess.email_attempts < 2) {
-              const lc = partial.toLowerCase();
-              if ((lc.includes('@') || lc.includes(' at ')) && (lc.includes('.com') || lc.includes(' dot ')) && !sess.bg_email_running) {
-                sess.bg_email_running = true;
-                callLog.withComponent('Agent').info(`[Streaming Fast-Match] Found Email pattern, running background validation.`);
-
-                Promise.resolve().then(async () => {
-                  try {
-                    const normStr = await normalizeSpokenEmailTool({ spoken_email: lc }) || await normalizeSpokenEmailTool.execute?.({ spoken_email: lc }) || await normalizeSpokenEmailTool.function?.({ spoken_email: lc });
-                    const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
-
-                    const valStr = await validateEmailTool({ email: norm.normalized_email }) || await validateEmailTool.execute?.({ email: norm.normalized_email }) || await validateEmailTool.function?.({ email: norm.normalized_email });
-                    const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-                    if (val.valid) {
-                      sess.email = val.normalized;
-                      sess.email_valid = true;
-                      callLog.withComponent('Validation').info(`[Background] Validated Live Stream Email: ${val.normalized}`);
-                    }
-                  } catch (e) { }
-                  if (!sess.email_valid) sess.bg_email_running = false;
-                });
-              }
-            }
           }
         }
       };
