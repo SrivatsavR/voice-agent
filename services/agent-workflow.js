@@ -251,29 +251,28 @@ Collect and validate the seller's email address and GSTIN for Meesho Supplier Hu
 Q1 — If email not yet valid:
   "To set up your Meesho Supplier Hub account, I'll need your email address. You can spell it out if that's easier."
 
-  IMPORTANT: When the caller speaks their email:
-  1. First call the normalize_spoken_email tool with the raw spoken text.
-  2. Then call the validate_email tool with the normalized result.
-  3. If valid: read it back to the caller for confirmation: "I have your email as [email]. Is that correct?"
-  4. If the tool returns a suggestion (typo detected): ask "Did you mean [suggested email]?"  
-  5. If invalid: share the tool's error message in natural language. Ask them to spell it out slowly.
+   IMPORTANT: PROMPTLY use the provided tools. As soon as the caller mentions an email:
+   1. IMMEDIATELY call the normalize_spoken_email tool.
+   2. Then call the validate_email tool with that result.
+   3. If valid: Read it back: "I have your email as [email]. Is that correct?"
+   4. If invalid or typo: Share the error naturally and ask them to spell it slowly.
 
-  Track email_attempts. After 3 failed attempts:
-    Say: "No worries, we can collect your email via SMS after this call."
-    Set email_valid: false, move to GSTIN.
+   Track email_attempts. After 3 failed attempts:
+     Say: "No worries, we can collect your email via SMS after this call."
+     Set email_valid: false, move to GSTIN.
 
 --- GSTIN / UIN COLLECTION ---
 Q2 — If GSTIN and UIN not yet collected and not skipped:
   "Do you have a GST number? If so can you share it, if you don't have GST do you have a UIN or enrollment ID?"
 
-  If they provide GSTIN:
-  1. Call the validate_gstin tool with the spoken GSTIN.
-  2. If valid: read it back in groups (e.g., "27, ABCDE, 1234, F, 1, Z, 5") and confirm: "Is that correct?"
-  3. If invalid: share the specific error from the tool naturally. Ask them to try again.
+   If they provide GSTIN:
+   1. IMMEDIATELY call the validate_gstin tool.
+   2. If valid: Confirm it back naturally.
+   3. If invalid: Read the tool's error message and ask to try one more time.
 
-  Track gst_attempts. After 2 failed attempts:
-    Say: "That's alright, our team can help you verify your GST details after onboarding."
-    Set gstin_valid: false, move on.
+   Track gst_attempts. After 2 failed attempts:
+     Say: "That's alright, our team can help you verify your GST details after onboarding."
+     Set gstin_valid: false, move on.
 
   If they provide a UIN or Enrollment ID:
     Set uin_or_enrollment_id: <the exact ID they mentioned>, set gst_skipped: true.
@@ -306,9 +305,9 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - gst_attempts: number (increment on each failed attempt)
 - pan_number: string or null
 - pan_skipped: true or false`,
-  model: "gpt-4o-mini",
+  model: "gpt-4o",
   tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
-  modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true, response_format: { type: "json_object" } }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 1024, store: true, response_format: { type: "json_object" } }
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -331,7 +330,7 @@ When the user asks a question:
 1. Search the relevant terms using the Vector Knowledge base tool.
 2. Answer the question naturally, accurately, and concisely based ONLY on the information retrieved from the Knowledge Base Vector DB tool.
 3. If the answer is not in the knowledge base, or if the tool returns no useful information, DO NOT guess or hallucinate. Instead, say: "I apologize, but I don't have that information right now. Our support team can help you with that once your account is set up."
-4. After answering or addressing their question, always ask: "Do you have any other questions?"
+4. ALWAYS end every response in this node with: "Do you have any other questions?" until they are ready to hang up.
 
 Step 3: Call Ending:
 When the user indicates they have no more questions, are satisfied, or are ready to end the call, say EXACTLY verbatim:
@@ -542,7 +541,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     // Inject session state for closure node
     let userMessage = transcript;
     if (currentNode === 'NODE_4_CLOSURE') {
-      userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(session, null, 2)}]`;
+      const sessionSummary = { ...session };
+      delete sessionSummary.caller_phone;
+      userMessage = `${transcript}\n\n[Current session data for your summary — do NOT read this aloud: ${JSON.stringify(sessionSummary, null, 2)}]`;
     }
 
     let hasStreamed = false;
