@@ -687,12 +687,15 @@ export function createCallSession(callerPhone = '', options = {}) {
       userMessage = `${transcript}\n\n[SYSTEM: Date: ${new Date().toISOString().split('T')[0]}, Session: ${JSON.stringify(activeData)}]`;
     }
 
+    let streamedCount = 0;
+
     const llmPromise = (async () => {
       try {
         let ttsBuffer = "";
         const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
           return await runNode(agent, userMessage, (chunk) => {
             if (!fastMatchResult && tts && isActiveCallback()) {
+              streamedCount += chunk.length;
               ttsBuffer += chunk;
               if (/[.,?!|।, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
                 const bIdx = ttsBuffer.search(/[.,?!|।,]/) + 1 || ttsBuffer.length;
@@ -705,15 +708,21 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           });
         });
-        if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) tts.sendText(ttsBuffer);
+        if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) {
+          tts.sendText(ttsBuffer);
+          streamedCount += ttsBuffer.length;
+        }
 
         const parsed = parseAgentOutput(raw);
         // Fallback: If for some reason streaming didn't send anything (but logic says it should have), send it now.
-        if (sentLength === 0 && parsed.say && !fastMatchResult && tts && isActiveCallback()) {
+        if (streamedCount === 0 && parsed.say && !fastMatchResult && tts && isActiveCallback()) {
           tts.sendText(parsed.say);
         }
         return parsed;
-      } catch (e) { return null; }
+      } catch (e) {
+        if (options.logger) options.logger.error('[Workflow] llmPromise error', e);
+        return null;
+      }
     })();
 
     // 3. Race Resolution
@@ -752,7 +761,7 @@ export function createCallSession(callerPhone = '', options = {}) {
 
     // Standard Path
     const finalLLMOutput = await llmPromise;
-    if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: true };
+    if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: false };
 
     if (finalLLMOutput.updates) Object.assign(session, finalLLMOutput.updates);
     handleBackgroundTasks(finalLLMOutput);
