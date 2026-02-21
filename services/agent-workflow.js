@@ -214,7 +214,7 @@ ${GLOBAL_GUARDRAILS}
 Conclude the call. Inform them about the WhatsApp link. Answer any questions using the tool.
 
 === FLOW ===
-1. **Closing**: "Maine saari details note kar li hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Onboarding tabhi complete hogi jab aap documents verify kar lenge, uske baad hi aap Meesho par selling shuru kar sakte hain. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+1. **Closing**: "Saari details collect ho gayi hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
 2. **QnA**: If they ask anything, use 'search_knowledge_base' and ALWAYS end with: "Kya koi aur sawaal hai aapka?"
 
 === RULES ===
