@@ -217,8 +217,9 @@ async function pollLogs() {
                         addMessage('agent', txt);
                     } else if (entry.component === 'User') {
                         addMessage('user', entry.message);
-                    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && entry.data?.updates) {
-                        Object.assign(currentSession, entry.data.updates);
+                    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && (entry.data?.updates || entry.updates)) {
+                        const updates = entry.data?.updates || entry.updates;
+                        Object.assign(currentSession, updates);
                         updateVariables(currentSession);
                     }
                 }

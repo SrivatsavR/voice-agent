@@ -536,23 +536,14 @@ wss.on('connection', (ws) => {
             return isActive && myProcessingId === currentProcessingId;
           });
 
-          // Pass tts so the agent workflow can stream text chunks immediately
-          const result = await callSession.processTranscript(transcript, tts);
+          // Pass tts and silenceFiller so the agent workflow can stream text chunks immediately and pause fillers
+          const result = await callSession.processTranscript(transcript, tts, silenceFiller);
           callLog.withComponent('Workflow').timeEnd(timer);
 
-          // ENFORCE ENGLISH ASR FOR GST:
-          // If we are in NODE_3 and trying to collect GST (attempts < 2), force English.
-          if (result.next_node === 'NODE_3_CONTACT_GST') {
-            const sess = result.session;
-            if (!sess.gstin_valid && sess.gst_attempts < 2) {
-              asr?.setLanguage?.('en-IN');
-            } else {
-              asr?.setLanguage?.('hi');
-            }
-          } else {
-            // Restore Hindi for other nodes
-            asr?.setLanguage?.('hi');
-          }
+
+          // Language switching removed to prevent ASR teardown (kills the stream)
+          // The LLM now handles Hinglish mixed input naturally.
+
 
           // Guard: if a newer transcript arrived while we were waiting, discard this result
           if (myProcessingId !== currentProcessingId) {

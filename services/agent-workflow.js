@@ -6,7 +6,12 @@ import {
   validateGSTINTool,
   validatePhoneTool,
   validatePriceRangeTool,
-  normalizeListingDateTool
+  normalizeListingDateTool,
+  validateEmailTool as validateEmail,
+  normalizeSpokenEmailTool as normalizeSpokenEmail,
+  validateGSTINTool as validateGSTIN,
+  validatePriceRangeTool as validatePriceRange,
+  normalizeListingDateTool as normalizeListingDate
 } from '../utils/validators.js';
 import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
@@ -416,6 +421,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         if (onSayChunk && finalOutputText) {
           const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
           if (match) {
+            // Language switching removed to prevent ASR teardown
             const currentSay = match[1];
             const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
 
@@ -458,7 +464,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
   }
 
-  async function processTranscript(transcript, tts = null) {
+  async function processTranscript(transcript, tts = null, silenceFiller = null) {
     if (TERMINAL_NODES.has(currentNode)) {
       return {
         say: '',
@@ -540,26 +546,29 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       Promise.resolve().then(async () => {
         try {
-          const valStr = await validateGSTINTool({ gstin: candidate }) || await validateGSTINTool.execute?.({ gstin: candidate }) || await validateGSTINTool.function?.({ gstin: candidate });
+          if (silenceFiller) silenceFiller.pause();
+          const valStr = await validateGSTINTool.execute({ gstin: candidate });
           const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-          if (val.valid) {
+          if (val && val.valid) {
             session.gstin = val.normalized;
             session.gstin_valid = true;
             if (isActiveCallback && isActiveCallback()) {
               if (options.logger) options.logger.withComponent('Validation').info('GST Validated in background');
-              await processTranscript(`[SYSTEM: Background verify DONE. GSTIN is VALID. You must immediately state it is correct and move to the next missing field.]`, tts);
+              await processTranscript(`[SYSTEM: Background verify DONE. GSTIN is VALID. You must immediately state it is correct and move to the next missing field.]`, tts, silenceFiller);
             }
           } else {
             session.gst_attempts = (session.gst_attempts || 0) + 1;
             if (isActiveCallback && isActiveCallback()) {
               if (options.logger) options.logger.withComponent('Validation').warn('GST Invalid in background', val);
-              await processTranscript(`[SYSTEM: Verification failed. You MUST tell the user the GST they provided is invalid: ${val.error}. Ask for GSTIN again.]`, tts);
+              await processTranscript(`[SYSTEM: Verification failed. You MUST tell the user the GST they provided is invalid: ${val ? val.error : 'unknown error'}. Ask for GSTIN again.]`, tts, silenceFiller);
             }
           }
         } catch (e) {
           if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
+        } finally {
+          session.bg_gst_running = false;
+          if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
         }
-        session.bg_gst_running = false;
       });
     }
 
@@ -570,29 +579,32 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       Promise.resolve().then(async () => {
         try {
-          const normStr = await normalizeSpokenEmailTool({ spoken_email: candidate }) || await normalizeSpokenEmailTool.execute?.({ spoken_email: candidate }) || await normalizeSpokenEmailTool.function?.({ spoken_email: candidate });
+          if (silenceFiller) silenceFiller.pause();
+          const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: candidate });
           const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
 
-          const valStr = await validateEmailTool({ email: norm.normalized_email }) || await validateEmailTool.execute?.({ email: norm.normalized_email }) || await validateEmailTool.function?.({ email: norm.normalized_email });
+          const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
           const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-          if (val.valid) {
+          if (val && val.valid) {
             session.email = val.normalized;
             session.email_valid = true;
             if (isActiveCallback && isActiveCallback()) {
               if (options.logger) options.logger.withComponent('Validation').info('Email Validated in background');
-              await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts);
+              await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts, silenceFiller);
             }
           } else {
             session.email_attempts = (session.email_attempts || 0) + 1;
             if (isActiveCallback && isActiveCallback()) {
               if (options.logger) options.logger.withComponent('Validation').warn('Email Invalid in background', val);
-              await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val.error}. Ask for email again.]`, tts);
+              await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
             }
           }
         } catch (e) {
           if (options.logger) options.logger.withComponent('Validation').error('Validation loop error', e);
+        } finally {
+          session.bg_email_running = false;
+          if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
         }
-        session.bg_email_running = false;
       });
     }
     // --- End Background Verification ---
