@@ -111,18 +111,18 @@ function updateVariables(session) {
         { key: 'price_min', label: 'Min Price', icon: 'tag' },
         { key: 'price_max', label: 'Max Price', icon: 'tag' },
         { key: 'email', label: 'Email ID', icon: 'mail' },
-        { key: 'gstin_valid', label: 'GST Validated', icon: 'shield-check' }
+        { key: 'gstin', label: 'GST Number', icon: 'shield-check' }
     ];
 
     sessionVariables.innerHTML = '';
     targets.forEach(target => {
         const val = session[target.key];
-        const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false;
+        const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true);
 
         const div = document.createElement('div');
         div.className = `variable-item p-4 border rounded-2xl transition-all duration-500 flex items-center gap-4 ${isCaptured
-                ? 'bg-emerald-500/10 border-emerald-500/30'
-                : 'bg-white/[0.02] border-white/5 opacity-50'
+            ? 'bg-emerald-500/10 border-emerald-500/30'
+            : 'bg-white/[0.02] border-white/5 opacity-50'
             }`;
 
         div.innerHTML = `
@@ -135,6 +135,7 @@ function updateVariables(session) {
                     ${isCaptured ? (Array.isArray(val) ? val.join(', ') : val) : 'Pending...'}
                 </div>
             </div>
+            ${(target.key === 'gstin' && session.gstin_valid) ? '<div class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[9px] font-bold border border-emerald-500/30 uppercase mr-2">Verified</div>' : ''}
             ${isCaptured ? '<div class="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>' : ''}
         `;
         sessionVariables.appendChild(div);
