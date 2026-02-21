@@ -300,7 +300,7 @@ Q3 — If gst_skipped=true AND pan_number is empty:
 - gst_attempts: number (increment on each failed attempt)
 - pan_number: string or null
 - pan_skipped: true or false`,
-  model: "gpt-4o",
+  model: "gpt-4o-mini",
   tools: [validateEmailTool, normalizeSpokenEmailTool, validateGSTINTool],
   modelSettings: { temperature: 0.3, topP: 1, maxTokens: 768, store: true, response_format: { type: "json_object" } }
 });
@@ -353,7 +353,7 @@ Set call_outcome: "incomplete" (if email_valid=false or critical fields are miss
 - summary_confirmed: true or false
 - call_outcome: "qualified" | "incomplete"
 - correction_requested: string (which field, if any)`,
-  model: "gpt-4o",
+  model: "gpt-4o-mini",
   modelSettings: { temperature: 0.4, topP: 1, maxTokens: 1024, store: true, response_format: { type: "json_object" } }
 });
 

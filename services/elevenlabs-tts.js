@@ -55,8 +55,8 @@ export class ElevenLabsTTS {
 
             const apiKey = process.env.ELEVENLABS_API_KEY;
 
-            // max inactivity_timeout = 180s
-            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180`;
+            // max inactivity_timeout = 180s, optimize_streaming_latency=3 drops lookahead for faster TTFB
+            const url = `wss://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream-input?model_id=${MODEL_ID}&output_format=${OUTPUT_FORMAT}&inactivity_timeout=180&optimize_streaming_latency=3`;
 
             const currentWs = new WebSocket(url, {
                 headers: { 'xi-api-key': apiKey }
