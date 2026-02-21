@@ -19,6 +19,17 @@ export class DeepgramASR {
         process.nextTick(() => this._connect());
     }
 
+    setLanguage(lang) {
+        if (this.options.language === lang) return;
+        this._log.info(`🌐 Switching ASR language to: ${lang}`);
+        this.options.language = lang;
+        // Reconnect to apply new language
+        if (this.ws) {
+            this.ws.close(1000, 'language_switch');
+        }
+        // _connect will be called by close handler if not explicit closed
+    }
+
     _connect() {
         if (this._closed || this._reconnectAttempts >= this._maxReconnectAttempts) {
             return;
@@ -29,6 +40,8 @@ export class DeepgramASR {
             this._log.error('🚫 DEEPGRAM_API_KEY missing');
             return;
         }
+
+        const lang = this.options.language || 'hi';
 
         const params = new URLSearchParams({
             model: 'nova-2',
@@ -41,7 +54,7 @@ export class DeepgramASR {
             utterance_end_ms: '1000',
             vad_events: 'true',
             smart_format: 'true',
-            language: 'hi'
+            language: lang
         });
 
         const url = `wss://api.deepgram.com/v1/listen?${params}`;

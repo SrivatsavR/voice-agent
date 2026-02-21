@@ -39,7 +39,12 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
-- **NO PHONE COLLECTION**: NEVER ask for their phone number. If they give it, say "I already have it" and move to the next question.
+- **NO PHONE COLLECTION**: NEVER ask for their phone number.
+- **CHECK CONTEXT**: Check [SYSTEM: Current session variables] before every response. Do NOT ask for information that is already present.
+- **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates" object immediately and acknowledge it naturally.
+- **CRISP HINDI**: Use short, direct questions. Avoid "Aapka", "Jaan sakte hain", etc. if not needed.
+  - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
+  - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === RESPONSE FORMAT ===
 Strictly return JSON. "say" must be the FIRST key.
@@ -274,21 +279,43 @@ function parseAgentOutput(rawOutput) {
 
   let text = typeof rawOutput === 'string' ? rawOutput : JSON.stringify(rawOutput);
 
-  // Strip markdown code fences if present (```json ... ```)
-  text = text.replace(/```json\s * /gi, '').replace(/```\s*/g, '').trim();
+  // Clean up potential markdown or preambles
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    text = text.substring(firstBrace, lastBrace + 1);
+  }
+
+  // Strip markdown code fences if they survived
+  text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
   try {
     const parsed = JSON.parse(text);
     return {
-      say: parsed.say ?? '',
+      say: parsed.say || '',
       updates: (parsed.updates && typeof parsed.updates === 'object') ? parsed.updates : {},
-      next_node: parsed.next_node ?? 'CONTINUE',
-      notes: parsed.notes ?? ''
+      next_node: parsed.next_node || 'CONTINUE',
+      notes: parsed.notes || ''
     };
-  } catch {
-    console.error('[Workflow] Failed to parse agent JSON output:', text.substring(0, 200));
+  } catch (err) {
+    console.error('[Workflow] JSON Parse Error:', err.message);
+    console.error('[Workflow] Problematic String:', text.substring(0, 1000));
+
+    // Fallback: If it's not valid JSON, but maybe has a "say" field we can regex out?
+    const sayMatch = text.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+    if (sayMatch) {
+      const extractedSay = sayMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n');
+      return {
+        say: extractedSay,
+        updates: {},
+        next_node: 'CONTINUE',
+        notes: 'partial_parse_success'
+      };
+    }
+
     return {
-      say: "I apologize, my system didn't quite catch that. Let's continue from where we left off.",
+      say: "I'm sorry, my system is having a bit of trouble. Could you please repeat that?",
       updates: {},
       next_node: 'CONTINUE',
       notes: 'parse_error'
@@ -412,10 +439,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         )
       );
 
-      userMessage = `${transcript} \n\n[SYSTEM CONTEXT - DO NOT READ ALOUD]
-Current Session Data: ${JSON.stringify(activeData)}
-Instruction: Focus on collecting the NEXT MISSING piece of information.If the user just provided info for a LATER step, capture it in 'updates' and ask the next logically missing question.
-  CRITICAL: Every response("say") MUST end with a clear question mark.No preambles.No explanations.`;
+      userMessage = `${transcript}\n\n[SYSTEM: Current session variables: ${JSON.stringify(activeData)}]`;
     }
 
     let hasStreamed = false;
@@ -428,9 +452,6 @@ Instruction: Focus on collecting the NEXT MISSING piece of information.If the us
       });
     });
 
-    // We pass the raw object to parseAgentOutput. 
-    // Wait, stream.finalOutput gives the resolved object because the agent uses Zod or text.
-    // Actually, since response is just JSON text, finalOutput might be text.
     const output = parseAgentOutput(raw);
 
     // Merge updates into session
@@ -444,23 +465,15 @@ Instruction: Focus on collecting the NEXT MISSING piece of information.If the us
       const hasNotes = output.notes && output.notes !== '' && output.notes !== 'parse_error';
 
       if (hasUpdates || hasNotes) {
-        // Here we simulate an async DB call that does not block the workflow
-        // In a real implementation this would be e.g., await db.collection('calls').updateOne(...)
         if (options.logger) {
-          options.logger.withComponent('Database').info('Saving session updates and notes asynchronously', {
+          options.logger.withComponent('Database').info('Saving session updates', {
             updates: output.updates,
             notes: output.notes
           });
-        } else {
-          console.log('[Database] Saving session updates and notes asynchronously', { updates: output.updates, notes: output.notes });
         }
       }
     }).catch(err => {
-      if (options.logger) {
-        options.logger.withComponent('Database').error('Error saving to DB', err);
-      } else {
-        console.error('[Database] Error saving to DB', err);
-      }
+      if (options.logger) options.logger.withComponent('Database').error('Error saving to DB', err);
     });
 
     const prevNode = currentNode;

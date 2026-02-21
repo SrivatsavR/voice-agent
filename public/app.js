@@ -102,28 +102,49 @@ function addMessage(role, text) {
 }
 
 function updateVariables(session) {
-    // Only show interesting fields
-    const fields = [
-        'name_spoken', 'preferred_name', 'interest_in_meesho', 'has_bank_account',
-        'products_sold', 'price_min', 'price_max', 'switch_speed_days', 'email', 'gstin_valid'
+    // Define all target variables to show in the UI
+    const targets = [
+        { key: 'name_spoken', label: 'Seller Name', icon: 'user' },
+        { key: 'interest_in_meesho', label: 'Interest', icon: 'check-circle' },
+        { key: 'has_bank_account', label: 'Bank Account', icon: 'credit-card' },
+        { key: 'products_sold', label: 'Category', icon: 'package' },
+        { key: 'price_min', label: 'Min Price', icon: 'tag' },
+        { key: 'price_max', label: 'Max Price', icon: 'tag' },
+        { key: 'email', label: 'Email ID', icon: 'mail' },
+        { key: 'gstin_valid', label: 'GST Validated', icon: 'shield-check' }
     ];
 
     sessionVariables.innerHTML = '';
-    fields.forEach(key => {
-        const val = session[key];
-        if (val !== undefined && val !== null && val !== '') {
-            const div = document.createElement('div');
-            div.className = `variable-item p-3 border border-white/5 rounded-xl bg-white/[0.02] flex justify-between items-center text-sm`;
-            div.innerHTML = `
-                <span class="text-white/40 font-mono text-xs">${key}</span>
-                <span class="text-indigo-300 font-medium">${Array.isArray(val) ? val.join(', ') : val}</span>
-            `;
-            sessionVariables.appendChild(div);
-        }
+    targets.forEach(target => {
+        const val = session[target.key];
+        const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false;
+
+        const div = document.createElement('div');
+        div.className = `variable-item p-4 border rounded-2xl transition-all duration-500 flex items-center gap-4 ${isCaptured
+                ? 'bg-emerald-500/10 border-emerald-500/30'
+                : 'bg-white/[0.02] border-white/5 opacity-50'
+            }`;
+
+        div.innerHTML = `
+            <div class="p-2 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-white/20'}">
+                <i data-lucide="${target.icon}" class="w-4 h-4"></i>
+            </div>
+            <div class="flex-1">
+                <div class="text-[10px] uppercase tracking-wider text-white/30 font-bold">${target.label}</div>
+                <div class="text-sm font-medium ${isCaptured ? 'text-emerald-100' : 'text-white/10 italic'}">
+                    ${isCaptured ? (Array.isArray(val) ? val.join(', ') : val) : 'Pending...'}
+                </div>
+            </div>
+            ${isCaptured ? '<div class="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>' : ''}
+        `;
+        sessionVariables.appendChild(div);
     });
 
+    lucide.createIcons();
+
     if (sessionVariables.children.length === 0) {
-        sessionVariables.innerHTML = '<div class="text-center py-20 opacity-20"><p>Waiting for data...</p></div>';
+        sessionVariables.innerHTML = '<div class="text-center py-20 opacity-20"><i data-lucide="layers" class="w-12 h-12 mx-auto mb-4"></i><p>Waiting for data...</p></div>';
+        lucide.createIcons();
     }
 }
 

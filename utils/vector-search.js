@@ -1,5 +1,6 @@
 import { Pinecone } from '@pinecone-database/pinecone';
 import { tool } from '@openai/agents';
+import { z } from 'zod/v3';
 import dotenv from 'dotenv';
 import { Logger } from './logger.js';
 
@@ -22,20 +23,14 @@ if (PINECONE_API_KEY && PINECONE_INDEX_NAME) {
     log.warn('Pinecone API key or Index Name is missing in .env. Search will be disabled.');
 }
 
+
+
 export const searchKnowledgeBaseTool = tool({
     name: 'search_knowledge_base',
-    description: "Searches the Meesho onboarding knowledge base (Vector DB) for answers to the caller's questions.Use this tool WHENEVER the caller asks a question about policies, onboarding, or general Meesho information.",
-    parameters: {
-        type: 'object',
-        properties: {
-            query: {
-                type: 'string',
-                description: 'The search query or question asked by the user, formatted for the vector index.'
-            }
-        },
-        required: ['query'],
-        additionalProperties: false
-    },
+    description: "Searches the Meesho onboarding knowledge base (Vector DB) for answers to the caller's questions.",
+    parameters: z.object({
+        query: z.string().describe('The search query or question asked by the user, formatted for the vector index.')
+    }).strict(),
     execute: async ({ query }) => {
         try {
             if (!pineconeIndex || !pc) {

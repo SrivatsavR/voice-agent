@@ -514,6 +514,20 @@ wss.on('connection', (ws) => {
           const result = await callSession.processTranscript(transcript, tts);
           callLog.withComponent('Workflow').timeEnd(timer);
 
+          // ENFORCE ENGLISH ASR FOR GST:
+          // If we are in NODE_3 and trying to collect GST (attempts < 2), force English.
+          if (result.next_node === 'NODE_3_CONTACT_GST') {
+            const sess = result.session;
+            if (!sess.gstin_valid && sess.gst_attempts < 2) {
+              asr?.setLanguage?.('en');
+            } else {
+              asr?.setLanguage?.('hi');
+            }
+          } else {
+            // Restore Hindi for other nodes
+            asr?.setLanguage?.('hi');
+          }
+
           // Guard: if a newer transcript arrived while we were waiting, discard this result
           if (myProcessingId !== currentProcessingId) {
             callLog.withComponent('Workflow').warn('Discarding stale result', { myProcessingId, currentProcessingId });
