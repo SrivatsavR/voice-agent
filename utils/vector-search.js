@@ -1,0 +1,84 @@
+import { Pinecone } from '@pinecone-database/pinecone';
+import { tool } from '@openai/agents';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+// Ensure these are set in your .env file
+const PINECONE_API_KEY = process.env.PINECONE_API_KEY;
+const PINECONE_INDEX_NAME = process.env.PINECONE_INDEX_NAME || 'meesho-index';
+
+// Initialize clients
+let pc = null;
+let pineconeIndex = null;
+
+if (PINECONE_API_KEY && PINECONE_INDEX_NAME) {
+    pc = new Pinecone({ apiKey: PINECONE_API_KEY });
+    pineconeIndex = pc.index(PINECONE_INDEX_NAME);
+} else {
+    console.warn('[Vector Search] Pinecone API key or Index Name is missing in .env. Search will be disabled.');
+}
+
+export const searchKnowledgeBaseTool = tool({
+    name: 'search_knowledge_base',
+    description: "Searches the Meesho onboarding knowledge base (Vector DB) for answers to the caller's questions.Use this tool WHENEVER the caller asks a question about policies, onboarding, or general Meesho information.",
+    parameters: {
+        type: 'object',
+        properties: {
+            query: {
+                type: 'string',
+                description: 'The search query or question asked by the user, formatted for the vector index. Keep the query concise and focused on the core intent.'
+            }
+        },
+        required: ['query']
+    },
+    execute: async ({ query }) => {
+        try {
+            if (!pineconeIndex || !pc) {
+                return "I'm sorry, my knowledge base is currently offline. Is there anything else I can assist you with?";
+            }
+
+            console.log(`[Vector Search] Generating embedding for query: "${query}"`);
+
+            // 1. Generate an embedding for the user's question using Pinecone Inference
+            const embeddingResponse = await pc.inference.embed({
+                model: 'llama-text-embed-v2',
+                inputs: [query],
+                parameters: { input_type: 'query' }
+            });
+
+            const queryVector = embeddingResponse.data[0].values;
+
+            // 2. Query Pinecone using the embedding
+            console.log(`[Vector Search] Querying Pinecone index: ${PINECONE_INDEX_NAME}`);
+            const searchResults = await pineconeIndex.query({
+                vector: queryVector,
+                topK: 3, // Change this to return more chunks if needed
+                includeMetadata: true,
+            });
+
+            if (!searchResults.matches || searchResults.matches.length === 0) {
+                return "I couldn't find a specific answer to that question in my documentation.";
+            }
+
+            // 3. Extract the text chunks from the results
+            const snippets = searchResults.matches
+                .filter(match => match.metadata && match.metadata.text)
+                .map(match => match.metadata.text);
+
+            if (snippets.length === 0) {
+                return "I found some related information but it isn't formatted correctly to read. Please contact human support.";
+            }
+
+            // Compile the relevant pieces for the LLM to read and synthesize into an answer
+            const combinedContext = snippets.join('\n\n---\n\n');
+            console.log(`[Vector Search] Found ${snippets.length} relevant chunks.`);
+
+            return `Information from the Knowledge Base:\n${combinedContext}`;
+
+        } catch (error) {
+            console.error('[Vector Search Error]:', error);
+            return "An error occurred while searching the knowledge base. Please let the user know you cannot answer right now.";
+        }
+    }
+});
