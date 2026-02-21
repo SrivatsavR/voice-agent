@@ -5,7 +5,8 @@ import {
   normalizeSpokenEmailTool,
   validateGSTINTool,
   validatePhoneTool,
-  validatePriceRangeTool
+  validatePriceRangeTool,
+  normalizeListingDateTool
 } from '../utils/validators.js';
 import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
@@ -155,7 +156,10 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai?"
-3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?" Capture their answer in 'listing_start' (e.g., "today", "2 days", "next week").
+3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
+   - When they answer, use **normalize_listing_date** tool to convert their spoken timing into YYYY-MM-DD.
+   - Use the current date from the system context as reference.
+   - Store the 'normalized' YYYY-MM-DD in 'listing_start'.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
@@ -165,7 +169,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o",
-  tools: [validatePriceRangeTool],
+  tools: [validatePriceRangeTool, normalizeListingDateTool],
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: { type: "json_object" } }
 });
 
@@ -445,7 +449,8 @@ export function createCallSession(callerPhone = '', options = {}) {
         )
       );
 
-      userMessage = `${transcript}\n\n[SYSTEM: Current session variables: ${JSON.stringify(activeData)}]`;
+      const today = new Date().toISOString().split('T')[0];
+      userMessage = `${transcript}\n\n[SYSTEM: Date: ${today}, Session: ${JSON.stringify(activeData)}]`;
     }
 
     let hasStreamed = false;

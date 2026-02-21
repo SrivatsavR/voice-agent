@@ -254,3 +254,49 @@ export const validatePriceRangeTool = tool({
         return JSON.stringify(result);
     }
 });
+
+// ─── Listing Date Normalization Tool ──────────────────────────────────────────
+
+export const normalizeListingDateTool = tool({
+    name: 'normalize_listing_date',
+    description: 'Converts relative time (today, tomorrow, next week) to YYYY-MM-DD. Use this when user says when they can start listing.',
+    parameters: z.object({
+        spoken_date: z.string().describe('What the user said about timing'),
+        current_date_iso: z.string().describe('The reference current date in YYYY-MM-DD format')
+    }),
+    execute: async ({ spoken_date, current_date_iso }) => {
+        const now = new Date(current_date_iso);
+        const input = spoken_date.toLowerCase();
+        let target = new Date(now);
+
+        if (input.includes('today') || input.includes('aaj') || input.includes('thodi der')) {
+            // Keep current date
+        } else if (input.includes('tomorrow') || input.includes('kal')) {
+            target.setDate(now.getDate() + 1);
+        } else if (input.includes('after') || input.includes('ke baad')) {
+            const match = input.match(/(\d+)/);
+            if (match) {
+                target.setDate(now.getDate() + parseInt(match[1]));
+            } else if (input.includes('parso')) {
+                target.setDate(now.getDate() + 2);
+            }
+        } else if (input.includes('week') || input.includes('hapte')) {
+            target.setDate(now.getDate() + 7);
+        } else if (input.includes('month') || input.includes('mahine')) {
+            target.setMonth(now.getMonth() + 1);
+        } else {
+            // Check if it's already a date-like thing
+            const dateMatch = input.match(/(\d{1,2})[th|st|nd|rd]?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/);
+            if (dateMatch) {
+                const parsed = new Date(`${dateMatch[1]} ${dateMatch[2]} 2026`);
+                if (!isNaN(parsed)) target = parsed;
+            }
+        }
+
+        return JSON.stringify({
+            valid: true,
+            normalized: target.toISOString().split('T')[0],
+            readable: target.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
+        });
+    }
+});
