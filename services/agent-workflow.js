@@ -192,7 +192,7 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 | Intent | Signal | Action |
 |--------|--------|--------|
 | GIVING_EMAIL | user provides email | 1. Call normalize_spoken_email. 2. Call validate_email. 3. Update 'email' and 'email_valid' in 'updates'. |
-| GIVING_GST | user provides GST/UIN | 1. Call validate_gstin. 2. Update 'gstin' and 'gstin_valid' in 'updates'. If invalid, increment 'gst_attempts'. |
+| GIVING_GST | user provides GST/UIN | 1. Say "Ek minute, main verify kar leti hoon." 2. Call validate_gstin. 3. Update 'gstin' and 'gstin_valid' in 'updates'. If invalid, increment 'gst_attempts' and tell the user the invalid GST they submitted ("Aapne X bataya hai jo invalid hai."). |
 | NO_GST | "don't have gst", "no" | Set 'gst_declined': true in 'updates'. Ask for UIN/Enrollment ID. |
 | GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
@@ -369,40 +369,36 @@ export function createCallSession(callerPhone = '', options = {}) {
       let sentLength = 0;
 
       for await (const event of stream) {
-        if (!event.type.includes('raw')) {
-          console.log(`[Stream Event]`, event.type, event.data?.type || '');
+        if (!event.type.includes('raw_model')) {
+          console.log(`[Stream Event]`, event.type);
         }
+
+        // Handle raw string events (non-tool calls)
         if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
           finalOutputText += event.data.text;
-
-          if (onSayChunk) {
-            // Match the "say" key up to the first unescaped quote
-            const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
-            if (match) {
-              const currentSay = match[1];
-              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
-
-              if (unescaped.length > sentLength) {
-                const chunk = unescaped.substring(sentLength);
-                sentLength = unescaped.length;
-                onSayChunk(chunk);
-              }
-            }
+        }
+        // Handle @openai/agents v0.0.5 structured json streaming object deltas
+        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+          if (contentObj && contentObj.text) {
+            finalOutputText = contentObj.text; // the framework accumulates the full string here
           }
-        } else if (event.type === 'model_text_delta') {
-          // @openai/agents emits model_text_delta for text updates!
+        }
+        else if (event.type === 'model_text_delta') {
           finalOutputText += event.data.textDelta || event.data.delta || '';
-          if (onSayChunk) {
-            const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
-            if (match) {
-              const currentSay = match[1];
-              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+        }
 
-              if (unescaped.length > sentLength) {
-                const chunk = unescaped.substring(sentLength);
-                sentLength = unescaped.length;
-                onSayChunk(chunk);
-              }
+        // Try to parse 'say' from whatever we've accumulated so far
+        if (onSayChunk && finalOutputText) {
+          const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
+          if (match) {
+            const currentSay = match[1];
+            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+            if (unescaped.length > sentLength) {
+              const chunk = unescaped.substring(sentLength);
+              sentLength = unescaped.length;
+              onSayChunk(chunk);
             }
           }
         }
