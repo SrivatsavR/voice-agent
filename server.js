@@ -2,6 +2,7 @@
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import http from 'http';
+import twilio from 'twilio';
 import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { DeepgramASR } from './services/deepgram-asr.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
@@ -140,7 +141,22 @@ serverLog.info('Default interruptions setting', { enabled: DEFAULT_INTERRUPTIONS
 
 // â”€â”€â”€ Active calls registry (for runtime toggle via API) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-const activeCalls = new Map(); // callId â†' { interruptionManager, callLog }
+const activeCalls = new Map(); // callId → { interruptionManager, callLog }
+
+// ─── Twilio Initialization ───────────────────────────────────────────────────
+
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+
+const twilioClient = (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN)
+  ? twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+  : null;
+
+if (!twilioClient) {
+  serverLog.warn('Twilio credentials missing. Outbound calls will be disabled.');
+}
+
 
 // â”€â”€â”€ Twilio Webhook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -255,9 +271,6 @@ app.get('/interruptions', (req, res) => {
   res.json({ active_calls: calls.length, calls });
 });
 
-res.json({ active_calls: calls.length, calls });
-});
-
 // ─── Frontend Support APIs ───────────────────────────────────────────────────
 
 const liveSessions = new Map();
@@ -359,6 +372,40 @@ app.post('/api/chat', async (req, res) => {
     res.status(500).json({ error: 'Session processing failed' });
   }
 });
+
+/**
+ * POST /api/outbound
+ * Triggers an outbound Twilio call
+ */
+app.post('/api/outbound', async (req, res) => {
+  const { phoneNumber } = req.body;
+
+  if (!twilioClient) {
+    return res.status(500).json({ error: 'Twilio is not configured on the server.' });
+  }
+
+  if (!phoneNumber) {
+    return res.status(400).json({ error: 'Phone number is required.' });
+  }
+
+  const host = req.get('host');
+  const url = `https://${host}/incoming`;
+
+  try {
+    const call = await twilioClient.calls.create({
+      from: TWILIO_PHONE_NUMBER,
+      to: phoneNumber,
+      url: url,
+    });
+
+    serverLog.info('Outbound call triggered', { callSid: call.sid, to: phoneNumber });
+    res.json({ success: true, callSid: call.sid });
+  } catch (error) {
+    serverLog.error('Failed to trigger outbound call', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 
 // â”€â”€â”€ WebSocket Upgrade Handling â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -612,7 +659,6 @@ wss.on('connection', (ws) => {
     activeCalls.delete(callId);
     log.info('Call cleanup complete', { callId });
   });
-});
 });
 
 const PORT = process.env.PORT || 8080;

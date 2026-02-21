@@ -14,6 +14,8 @@ const logContent = document.getElementById('log-content');
 const callIdDisplay = document.getElementById('call-id-display');
 const historyList = document.getElementById('history-list');
 const resetBtn = document.getElementById('reset-session');
+const triggerCallBtn = document.getElementById('trigger-call');
+const outboundPhoneInput = document.getElementById('outbound-phone');
 
 // --- API Functions ---
 async function api(path, options = {}) {
@@ -171,6 +173,39 @@ chatForm.onsubmit = (e) => {
 resetBtn.onclick = () => {
     chatMessages.innerHTML = '';
     startNewSession();
+};
+
+triggerCallBtn.onclick = async () => {
+    const phoneNumber = outboundPhoneInput.value.trim();
+    if (!phoneNumber) {
+        alert('Please enter a phone number (+91...)');
+        return;
+    }
+
+    triggerCallBtn.disabled = true;
+    triggerCallBtn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Calling...';
+    lucide.createIcons();
+
+    try {
+        const data = await api('/api/outbound', {
+            method: 'POST',
+            body: { phoneNumber }
+        });
+
+        if (data.success) {
+            addMessage('system', `Outbound call triggered! SID: ${data.callSid}`);
+            // Wait a bit then refresh history
+            setTimeout(refreshHistory, 5000);
+        } else {
+            addMessage('system', `Error: ${data.error}`);
+        }
+    } catch (e) {
+        addMessage('system', `Failed to trigger call: ${e.message}`);
+    } finally {
+        triggerCallBtn.disabled = false;
+        triggerCallBtn.innerHTML = '<i data-lucide="phone" class="w-4 h-4"></i> Call';
+        lucide.createIcons();
+    }
 };
 
 // --- Tabs ---
