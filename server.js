@@ -16,8 +16,7 @@ import { getHistory, saveToHistory } from './services/history-service.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-// Import validators for background streaming extraction
-import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from './utils/validators.js';
+// Import validators for background streaming extraction and burst correction handled above
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
