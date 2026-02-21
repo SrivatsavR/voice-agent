@@ -110,6 +110,7 @@ function updateVariables(session) {
         { key: 'products_sold', label: 'Category', icon: 'package' },
         { key: 'price_min', label: 'Min Price', icon: 'tag' },
         { key: 'price_max', label: 'Max Price', icon: 'tag' },
+        { key: 'listing_start', label: 'Listing Readiness', icon: 'calendar' },
         { key: 'email', label: 'Email ID', icon: 'mail' },
         { key: 'gstin', label: 'GST Number', icon: 'shield-check' }
     ];

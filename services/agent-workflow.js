@@ -155,14 +155,14 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing, ask: "Aapke items ki price range kya hai? Minimum aur maximum batayein?"
-3. **Speed**: If 'switch_speed_days' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
+3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?" Capture their answer in 'listing_start' (e.g., "today", "2 days", "next week").
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
 - Use 'validate_price_range' tool when both prices are mentioned.
 
 === ROUTING ===
-- Stay in NODE_2_DETAILS until Items, Price, and Speed are captured.
+- Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o",
   tools: [validatePriceRangeTool],
@@ -210,7 +210,7 @@ ${GLOBAL_GUARDRAILS}
 Conclude the call. Inform them about the WhatsApp link. Answer any questions using the tool.
 
 === FLOW ===
-1. **Closing**: "Maine saari details note kar li hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par selling shuru kar sakte hain. Kya drop karne se pehle aapka koi sawaal hai?"
+1. **Closing**: "Maine saari details note kar li hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par selling shuru kar sakte hain. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
 2. **QnA**: If they ask anything, use 'search_knowledge_base' and ALWAYS end with: "Kya koi aur sawaal hai aapka?"
 
 === RULES ===
@@ -254,6 +254,7 @@ const DEFAULT_SESSION = {
   price_max: null,
   switch_speed_days: null,
   switch_speed_bucket: '',
+  listing_start: '',
   // Node 3
   email: '',
   email_valid: false,
