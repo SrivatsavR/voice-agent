@@ -282,7 +282,27 @@ const liveSessions = new Map();
  * Returns last calls history
  */
 app.get('/api/history', (req, res) => {
-  res.json(getHistory());
+  const activeList = [];
+  for (const [callId, call] of activeCalls) {
+    if (call.callSession) {
+      activeList.push({
+        callId,
+        ...call.callSession.getSession(),
+        timestamp: new Date().toISOString(),
+        call_outcome: 'in_progress'
+      });
+    }
+  }
+  for (const [callId, sessionObj] of liveSessions) {
+    activeList.push({
+      callId,
+      ...sessionObj.getSession(),
+      timestamp: new Date().toISOString(),
+      call_outcome: 'in_progress (text)'
+    });
+  }
+  const fullHistory = [...activeList, ...getHistory()];
+  res.json(fullHistory);
 });
 
 /**
@@ -621,8 +641,9 @@ wss.on('connection', (ws) => {
 
                 Promise.resolve().then(async () => {
                   try {
-                    const valStr = await validateGSTINTool.execute({ gstin: candidate });
-                    const val = JSON.parse(valStr);
+                    // Extract validation logic without relying on the wrapper's .execute that fails
+                    const valStr = await validateGSTINTool({ gstin: candidate }) || await validateGSTINTool.execute?.({ gstin: candidate }) || await validateGSTINTool.function?.({ gstin: candidate });
+                    const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
                     if (val.valid) {
                       sess.gstin = val.normalized;
                       sess.gstin_valid = true;
@@ -644,10 +665,11 @@ wss.on('connection', (ws) => {
 
                 Promise.resolve().then(async () => {
                   try {
-                    const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: lc });
-                    const norm = JSON.parse(normStr);
-                    const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
-                    const val = JSON.parse(valStr);
+                    const normStr = await normalizeSpokenEmailTool({ spoken_email: lc }) || await normalizeSpokenEmailTool.execute?.({ spoken_email: lc }) || await normalizeSpokenEmailTool.function?.({ spoken_email: lc });
+                    const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
+
+                    const valStr = await validateEmailTool({ email: norm.normalized_email }) || await validateEmailTool.execute?.({ email: norm.normalized_email }) || await validateEmailTool.function?.({ email: norm.normalized_email });
+                    const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
                     if (val.valid) {
                       sess.email = val.normalized;
                       sess.email_valid = true;
@@ -668,6 +690,9 @@ wss.on('connection', (ws) => {
       }
 
       callSession = createCallSession(callerPhone, { logger: callLog });
+      if (activeCalls.has(callId)) {
+        activeCalls.get(callId).callSession = callSession;
+      }
 
       try {
         // Parallelize: fire LLM welcome call while ASR/TTS handshakes are in progress

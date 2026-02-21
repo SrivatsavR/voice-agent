@@ -540,8 +540,8 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       Promise.resolve().then(async () => {
         try {
-          const valStr = await validateGSTINTool.execute({ gstin: candidate });
-          const val = JSON.parse(valStr);
+          const valStr = await validateGSTINTool({ gstin: candidate }) || await validateGSTINTool.execute?.({ gstin: candidate }) || await validateGSTINTool.function?.({ gstin: candidate });
+          const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
           if (val.valid) {
             session.gstin = val.normalized;
             session.gstin_valid = true;
@@ -570,10 +570,11 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       Promise.resolve().then(async () => {
         try {
-          const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: candidate });
-          const norm = JSON.parse(normStr);
-          const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
-          const val = JSON.parse(valStr);
+          const normStr = await normalizeSpokenEmailTool({ spoken_email: candidate }) || await normalizeSpokenEmailTool.execute?.({ spoken_email: candidate }) || await normalizeSpokenEmailTool.function?.({ spoken_email: candidate });
+          const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
+
+          const valStr = await validateEmailTool({ email: norm.normalized_email }) || await validateEmailTool.execute?.({ email: norm.normalized_email }) || await validateEmailTool.function?.({ email: norm.normalized_email });
+          const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
           if (val.valid) {
             session.email = val.normalized;
             session.email_valid = true;

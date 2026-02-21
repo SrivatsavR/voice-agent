@@ -1,6 +1,7 @@
-
 let currentCallId = null;
 let currentSession = {};
+let lastRenderedLogCount = 0;
+let isVoiceCall = false;
 
 // Initialize Lucide icons
 lucide.createIcons();
@@ -31,15 +32,21 @@ async function startNewSession() {
     const data = await api('/api/chat', { method: 'POST', body: {} });
     currentCallId = data.callId;
     currentSession = data.session || {};
+    isVoiceCall = false;
+    lastRenderedLogCount = 0;
 
+    chatMessages.innerHTML = '';
     callIdDisplay.textContent = `Live Session: ${currentCallId}`;
     addMessage('agent', data.say);
     updateVariables(currentSession);
     refreshHistory();
-    pollLogs();
 }
 
 async function sendMessage(text) {
+    if (isVoiceCall) {
+        alert('You cannot type text in a live voice call!');
+        return;
+    }
     addMessage('user', text);
     const data = await api('/api/chat', {
         method: 'POST',
@@ -75,7 +82,26 @@ async function refreshHistory() {
             <div class="font-medium text-sm text-white/80">${call.preferred_name || call.name_spoken || 'Anonymous Seller'}</div>
             <div class="text-[10px] text-white/30 truncate">${call.caller_phone || 'External Call'}</div>
         `;
-        div.onclick = () => location.reload(); // Quick way to reset and view history
+        if (call.callId === currentCallId) {
+            div.classList.add('bg-white/10', 'border-indigo-500/50');
+        }
+
+        div.onclick = () => {
+            currentCallId = call.callId;
+            currentSession = call;
+            isVoiceCall = (call.caller_phone !== 'chat-user');
+            lastRenderedLogCount = 0;
+
+            chatMessages.innerHTML = '';
+            logContent.innerHTML = '<div class="text-white/20 italic">[Console initialized]</div>';
+            callIdDisplay.textContent = `Call ID: ${currentCallId}`;
+            updateVariables(currentSession);
+
+            document.querySelectorAll('#history-list > div.group').forEach(el => {
+                el.classList.remove('bg-white/10', 'border-indigo-500/50');
+            });
+            div.classList.add('bg-white/10', 'border-indigo-500/50');
+        };
         historyList.appendChild(div);
     });
 }
@@ -181,6 +207,25 @@ async function pollLogs() {
             logContent.appendChild(div);
         });
 
+        if (logs.length > lastRenderedLogCount) {
+            for (let i = lastRenderedLogCount; i < logs.length; i++) {
+                const entry = logs[i];
+                if (isVoiceCall) {
+                    if (entry.component === 'Agent') {
+                        let txt = entry.message || '';
+                        if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
+                        addMessage('agent', txt);
+                    } else if (entry.component === 'User') {
+                        addMessage('user', entry.message);
+                    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && entry.data?.updates) {
+                        Object.assign(currentSession, entry.data.updates);
+                        updateVariables(currentSession);
+                    }
+                }
+            }
+            lastRenderedLogCount = logs.length;
+        }
+
         if (logs.length > 0) {
             const logsTab = document.getElementById('logs-tab');
             if (!logsTab.classList.contains('hidden')) {
@@ -225,8 +270,6 @@ triggerCallBtn.onclick = async () => {
 
         if (data.success) {
             addMessage('system', `Outbound call triggered! SID: ${data.callSid}`);
-            // Wait a bit then refresh history
-            setTimeout(refreshHistory, 5000);
         } else {
             addMessage('system', `Error: ${data.error}`);
         }
@@ -257,3 +300,4 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 
 // Start
 startNewSession();
+setInterval(refreshHistory, 3000);
