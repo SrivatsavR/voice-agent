@@ -364,11 +364,30 @@ export function createCallSession(callerPhone = '', options = {}) {
       let sentLength = 0;
 
       for await (const event of stream) {
-        if (event.type === 'raw_model_stream_event' && event.data.type === 'text_stream') {
+        if (!event.type.includes('raw')) {
+          console.log(`[Stream Event]`, event.type, event.data?.type || '');
+        }
+        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
           finalOutputText += event.data.text;
 
           if (onSayChunk) {
             // Match the "say" key up to the first unescaped quote
+            const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
+            if (match) {
+              const currentSay = match[1];
+              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+              if (unescaped.length > sentLength) {
+                const chunk = unescaped.substring(sentLength);
+                sentLength = unescaped.length;
+                onSayChunk(chunk);
+              }
+            }
+          }
+        } else if (event.type === 'model_text_delta') {
+          // @openai/agents emits model_text_delta for text updates!
+          finalOutputText += event.data.textDelta || event.data.delta || '';
+          if (onSayChunk) {
             const match = finalOutputText.match(/"say"\s*:\s*"((?:[^"\\]|\\.)*)/);
             if (match) {
               const currentSay = match[1];

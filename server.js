@@ -103,7 +103,7 @@ class SilenceFillerManager {
     // Final safety check: is TTS still connected and ready?
     if (this._tts.isReady && this._tts.ws?.readyState === WebSocket.OPEN) {
       const name = this._callSession?.getSession()?.preferred_name || '';
-      const phrase = name ? `Hello ${name}, are we still connected?` : `Hello, are we still connected?`;
+      const phrase = name ? `Hello ${name}, kya aap mujhe sun pa rahe hain?` : `Hello, kya aap mujhe sun pa rahe hain?`;
 
       this._log.info('Firing silence filler phrase at 10s', { phrase });
       this._tts.sendText(phrase);
