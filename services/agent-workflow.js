@@ -550,7 +550,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.email_valid = true;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').info('[Background] Email Validated');
-                await processTranscript(`[SYSTEM: Verification done. Email is valid: ${val.normalized}. Move to next missing field.]`, tts, silenceFiller);
+                // Removed processTranscript on success to avoid TTS repetition
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.email_attempts = (session.email_attempts || 0) + 1;
@@ -585,7 +585,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.gstin_valid = true;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Validated');
-                await processTranscript(`[SYSTEM: Verification done. GSTIN ${val.normalized} is valid. Move to closure.]`, tts, silenceFiller);
+                // Removed processTranscript on success to avoid TTS repetition
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.gst_attempts = (session.gst_attempts || 0) + 1;
