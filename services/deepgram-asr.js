@@ -104,8 +104,14 @@ export class DeepgramASR {
                     this.options.onSpeechStarted?.();
                 } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
                     // Ignore Deepgram's native utterance end to strictly enforce 5s voice inactivity flush
+                } else if (msg.type === 'Error' || msg.error) {
+                    this._log.error('Deepgram API Error', msg);
+                } else if (msg.type !== 'Metadata') {
+                    this._log.debug('Deepgram unstructured message', msg);
                 }
-            } catch { }
+            } catch (err) {
+                this._log.error('Deepgram parse error', { error: err.message, data: data.toString() });
+            }
         });
 
         this.ws.on('close', (code, reason) => {
