@@ -1,5 +1,5 @@
-let currentCallId = null;
-let currentSession = {};
+let currentCallId = localStorage.getItem('lastCallId');
+let currentSession = JSON.parse(localStorage.getItem('lastSession') || '{}');
 let eventSource = null;
 let isVoiceCall = false;
 
@@ -144,6 +144,10 @@ async function startNewSession() {
     updateVariables(currentSession);
     refreshHistory();
 
+    // Persist to local storage
+    localStorage.setItem('lastCallId', currentCallId);
+    localStorage.setItem('lastSession', JSON.stringify(currentSession));
+
     // Web chat doesn't strictly need SSE for its own responses (handled in sendMessage),
     // but we connect anyway to keep logic consistent.
     setupRealtimeEvents(currentCallId);
@@ -168,7 +172,11 @@ async function sendMessage(text) {
     }
 
     if (data.say) addMessage('agent', data.say);
-    if (data.session) updateVariables(data.session);
+    if (data.session) {
+        currentSession = data.session;
+        updateVariables(currentSession);
+        localStorage.setItem('lastSession', JSON.stringify(currentSession));
+    }
 }
 
 async function refreshHistory() {
@@ -208,6 +216,10 @@ async function refreshHistory() {
             callIdDisplay.textContent = `ID: ${currentCallId}`;
             updateVariables(currentSession);
             setupRealtimeEvents(currentCallId);
+
+            // Persist selection
+            localStorage.setItem('lastCallId', currentCallId);
+            localStorage.setItem('lastSession', JSON.stringify(currentSession));
 
             // Fetch historical logs to backfill chat window
             // If the session object already has a transcript (from history-service), use it immediately
@@ -287,6 +299,10 @@ function updateVariables(session) {
     ];
 
     sessionVariables.innerHTML = '';
+
+    // Save state update
+    localStorage.setItem('lastSession', JSON.stringify(session));
+
     targets.forEach(target => {
         let val = target.format ? target.format(session) : session[target.key];
         const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true);
@@ -334,6 +350,8 @@ chatForm.onsubmit = (e) => {
 
 resetBtn.onclick = () => {
     chatMessages.innerHTML = '';
+    localStorage.removeItem('lastCallId');
+    localStorage.removeItem('lastSession');
     startNewSession();
 };
 
@@ -374,6 +392,23 @@ triggerCallBtn.onclick = async () => {
     }
 };
 
+// Visibility Handling for Re-sync
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentCallId) {
+        console.log('[App] Tab visible, re-syncing events...');
+        setupRealtimeEvents(currentCallId);
+        refreshHistory();
+    }
+});
+
 // Start
-startNewSession();
+if (currentCallId) {
+    callIdDisplay.textContent = `ID: ${currentCallId}`;
+    updateVariables(currentSession);
+    setupRealtimeEvents(currentCallId);
+    backfillLogs(currentCallId);
+    refreshHistory();
+} else {
+    startNewSession();
+}
 setInterval(refreshHistory, 5000);

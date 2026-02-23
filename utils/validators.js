@@ -171,13 +171,13 @@ export const validatePriceRangeTool = tool({
         if (price_min < 0 || price_max < 0) {
             result.valid = false;
             result.error = 'Prices cannot be negative. Ask the caller to confirm the amounts.';
-            return JSON.stringify(result);
+            return result;
         }
 
         if (price_min === 0 && price_max === 0) {
             result.valid = false;
             result.error = 'Both prices are zero. Ask the caller to provide their actual selling price range.';
-            return JSON.stringify(result);
+            return result;
         }
 
         if (price_min > price_max) {
@@ -186,7 +186,7 @@ export const validatePriceRangeTool = tool({
             result.price_min = price_max;
             result.price_max = price_min;
             result.note = `Swapped min and max since ${price_min} > ${price_max}. Confirm with the caller: "Just to confirm, your price range is ₹${price_max} to ₹${price_min}?"`;
-            return JSON.stringify(result);
+            return result;
         }
 
         // Meesho-specific guidance

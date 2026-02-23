@@ -653,12 +653,16 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       // Robust parsing: handle both objects and JSON strings
       if (typeof result === 'string') {
-        try {
-          return JSON.parse(result);
-        } catch (e) {
-          // If it's not JSON, return the raw string (it might be a plain text response)
-          return result;
+        const trimmed = result.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            return JSON.parse(trimmed);
+          } catch (e) {
+            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned string that looked like JSON but failed to parse: ${trimmed.substring(0, 50)}...`);
+            return result;
+          }
         }
+        return result;
       }
       return result;
     };
@@ -676,7 +680,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (silenceFiller) silenceFiller.pause();
             const norm = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
             // Simple validation: check for @ and .
-            if (norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
+            if (norm && typeof norm === 'object' && norm.normalized_email && norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
               session.email = norm.normalized_email;
               session.email_valid = true;
               if (options.logger) {
@@ -784,9 +788,8 @@ export function createCallSession(callerPhone = '', options = {}) {
               return;
             }
 
-            const resStr = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
-            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
-            if (res?.valid) {
+            const res = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
+            if (res && typeof res === 'object' && res.valid) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
