@@ -16,6 +16,7 @@ const historyList = document.getElementById('history-list');
 const resetBtn = document.getElementById('reset-session');
 const triggerCallBtn = document.getElementById('trigger-call');
 const outboundPhoneInput = document.getElementById('outbound-phone');
+const countryCodeSelect = document.getElementById('country-code');
 const extractionFeed = document.getElementById('extraction-feed');
 
 // --- API Functions ---
@@ -308,11 +309,14 @@ resetBtn.onclick = () => {
 };
 
 triggerCallBtn.onclick = async () => {
-    const phoneNumber = outboundPhoneInput.value.trim();
-    if (!phoneNumber) {
-        alert('Please enter a phone number (+91...)');
+    const rawNumber = outboundPhoneInput.value.trim();
+    if (!rawNumber) {
+        alert('Please enter a phone number');
         return;
     }
+
+    const countryCode = countryCodeSelect ? countryCodeSelect.value : '+91';
+    const phoneNumber = rawNumber.startsWith('+') ? rawNumber : (countryCode + rawNumber);
 
     triggerCallBtn.disabled = true;
     const originalContent = triggerCallBtn.innerHTML;

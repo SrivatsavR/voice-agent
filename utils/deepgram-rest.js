@@ -1,4 +1,4 @@
-import fetch from 'node-fetch';
+// Native fetch used (Node 18+)
 
 /**
  * Deepgram Pre-recorded (REST) API Wrapper

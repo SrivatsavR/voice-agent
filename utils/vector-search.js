@@ -1,6 +1,6 @@
 import { Pinecone } from '@pinecone-database/pinecone';
 import { tool } from '@openai/agents';
-import { z } from 'zod/v3';
+import { z } from 'zod';
 import dotenv from 'dotenv';
 import { Logger } from './logger.js';
 

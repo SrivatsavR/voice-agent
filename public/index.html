@@ -29,8 +29,8 @@
                         class="bg-gradient-to-br from-[#ff477e] to-[#771933] p-2.5 rounded-2xl shadow-lg shadow-pink-500/20">
                         <i data-lucide="mic" class="w-6 h-6 text-white"></i>
                     </div>
-                    <h1 class="text-xl font-bold tracking-tight text-slate-800">Meesho <span
-                            class="text-[#ff477e]">Voice AI</span>
+                    <h1 class="text-xl font-bold tracking-tight text-slate-800">Meesho <span class="text-[#ff477e]">AI
+                            services</span>
                     </h1>
                 </div>
 
@@ -109,14 +109,29 @@
                 class="p-4 border-b border-slate-200 bg-white/80 backdrop-blur-md flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <span class="text-sm font-medium text-slate-600">Test this agent by having it call you</span>
+                    <span class="text-sm font-medium text-slate-600">Call this agent on <span
+                            class="font-bold text-[#ff477e]">+1 989 441 0640</span> to test it or enter your number to
+                        have it call you.</span>
                 </div>
                 <div class="flex gap-2">
-                    <input type="tel" id="outbound-phone" placeholder="+91..."
-                        class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-[#ff477e]/50 w-48 transition-all hover:border-slate-300">
+                    <div
+                        class="flex border border-slate-200 rounded-xl bg-white overflow-hidden focus-within:border-[#ff477e]/50 transition-all hover:border-slate-300">
+                        <select id="country-code"
+                            class="bg-slate-50 border-r border-slate-200 px-3 py-2 text-sm focus:outline-none cursor-pointer text-slate-600">
+                            <option value="+91" selected>+91</option>
+                            <option value="+1">+1</option>
+                            <option value="+44">+44</option>
+                        </select>
+                        <input type="tel" id="outbound-phone" list="sample-numbers" placeholder="Phone number"
+                            class="px-4 py-2 text-sm focus:outline-none w-40">
+                        <datalist id="sample-numbers">
+                            <option value="9876543210">
+                            <option value="9998887776">
+                        </datalist>
+                    </div>
                     <button id="trigger-call"
                         class="px-5 py-2 bg-[#ff477e] hover:bg-[#ff1f61] rounded-xl border border-pink-400/30 shadow-lg shadow-pink-500/20 transition-all text-sm font-bold flex items-center gap-2 text-white">
-                        <i data-lucide="phone" class="w-4 h-4"></i> Make a Call
+                        <i data-lucide="phone" class="w-4 h-4"></i> Call me
                     </button>
                     <button id="reset-session"
                         class="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all text-sm flex items-center gap-2 text-slate-600">

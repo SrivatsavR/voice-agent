@@ -53,6 +53,12 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
   - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
+=== DATA TYPES FOR UPDATES_JSON ===
+- 'email_valid', 'gstin_valid', 'pitch_delivered', 'summary_confirmed': **BOOLEAN** (true/false), NOT strings.
+- 'price_min', 'price_max': **NUMBER** or null.
+- 'products_sold': **ARRAY** of strings.
+- 'interest_in_meesho': "yes" or "no".
+
 === RESPONSE FORMAT ===
 Strictly return JSON.
 {
@@ -213,20 +219,22 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
-Conclude the call professionally.
+Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
 
 === FLOW ===
 1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
    Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **Handle Questions**: If the user asks a question, use the 'searchKnowledgeBaseTool' by setting 'kb_query' in 'updates_json'.
-3. **Handle No Questions / Post-Answer**: If the user has no more questions (or says "no", "that's it", "theek hai"), sign off and end the call.
-   Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad!"
-   Set next_node to "TERM_COMPLETE".
+2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
+   - Reply with: "Zaroor, main check karke batati hoon." 
+   - Wait for the system to provide the Knowledge Base info in the next turn.
+3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"), or if you have just answered their questions and they are satisfied:
+   - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
+   - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- Do NOT end the call on the first closing. Always ask if they have questions.
-- If they ask a question, answer it (via tool), then return to the closing pitch about WhatsApp and thank them for their time.
-- Only move to TERM_COMPLETE when the user indicates they are finished.`,
+- NEVER end the call immediately after taking details. Always ask "Kya aapko kuch aur jaanna hai?".
+- Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
+- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -291,6 +299,33 @@ const DEFAULT_SESSION = {
   node3_done: false,
   node4_done: false,
 };
+
+// ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
+
+function sanitizeMessage(msg) {
+  if (!msg.content) return msg;
+
+  const role = msg.role;
+  let newContent = msg.content;
+
+  if (typeof newContent === 'string') {
+    // Top-level strings are fine, the SDK converts them
+    return msg;
+  }
+
+  if (Array.isArray(newContent)) {
+    newContent = newContent.map(item => {
+      if (typeof item === 'string') return item;
+      if (item.type === 'text') {
+        const type = (role === 'assistant') ? 'output_text' : 'input_text';
+        return { ...item, type };
+      }
+      return item;
+    });
+  }
+
+  return { ...msg, content: newContent };
+}
 
 // ─── Helper: Parse agent output ───────────────────────────────────────────────
 
@@ -369,31 +404,20 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function runNode(agent, userMessage, onSayChunk) {
     return await withTrace("Reseller Qualification", async () => {
       // Create a static System Message to reduce input tokens in instructions
-      const systemMessage = {
+      const systemMessage = sanitizeMessage({
         role: 'system',
         content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
-      };
+      });
 
       if (userMessage) {
-        conversationHistory.push({
+        conversationHistory.push(sanitizeMessage({
           role: 'user',
           content: userMessage
-        });
+        }));
       }
 
-      // Limit conversation history to last 10 turns and sanitize items
-      const trimmedHistory = conversationHistory.slice(-10).map(msg => {
-        if (Array.isArray(msg.content)) {
-          return {
-            ...msg,
-            content: msg.content.map(c => {
-              if (c.type === 'text') return { ...c, type: msg.role === 'assistant' ? 'output_text' : 'input_text' };
-              return c;
-            })
-          };
-        }
-        return msg;
-      });
+      // Limit conversation history to last 10 turns and sanitize
+      const trimmedHistory = conversationHistory.slice(-10).map(sanitizeMessage);
 
       const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
 
@@ -439,17 +463,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       await stream.completed;
-      // Sanitize new items before storing to avoid 'text' type issues on next turn
-      const newItems = stream.newItems.map(item => {
-        const raw = item.rawItem;
-        if (raw.content && Array.isArray(raw.content)) {
-          raw.content = raw.content.map(c => {
-            if (c.type === 'text') return { ...c, type: raw.role === 'assistant' ? 'output_text' : 'input_text' };
-            return c;
-          });
-        }
-        return raw;
-      });
+      // Sanitize new items before storing
+      const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
       conversationHistory.push(...newItems);
       return stream.finalOutput;
     });
@@ -641,9 +656,6 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            if (!_audioBuffer || _audioBuffer.length < 1600) { // Need at least 200ms of audio
-              throw new Error('Audio buffer too small for burst correction');
-            }
             const valStr = await runTool(validateGSTINTool, { gstin: candidate });
             const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
 
@@ -791,7 +803,12 @@ export function createCallSession(callerPhone = '', options = {}) {
 
     // 2. Start LLM (Ground Truth Path) in Parallel
     const agent = NODE_AGENTS[currentNode];
-    if (!agent) return { say: "Goodbye", next_node: 'TERM_COMPLETE', session: { ...session } };
+    if (!agent) {
+      if (TERMINAL_NODES.has(currentNode)) {
+        return { say: "", next_node: currentNode, session: { ...session } };
+      }
+      return { say: "Samay dene ke liye dhanyavad. Alvida!", next_node: 'TERM_COMPLETE', session: { ...session } };
+    }
 
     let userMessage = transcript;
     if (currentNode !== 'NODE_0_WELCOME') {
