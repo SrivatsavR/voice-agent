@@ -53,7 +53,7 @@ export const searchKnowledgeBaseTool = tool({
             log.info(`Querying Pinecone index: ${PINECONE_INDEX_NAME}`);
             const searchResults = await pineconeIndex.query({
                 vector: queryVector,
-                topK: 3, // Change this to return more chunks if needed
+                topK: 5, // Increased to provide more context
                 includeMetadata: true,
             });
 
@@ -64,7 +64,7 @@ export const searchKnowledgeBaseTool = tool({
             // 3. Extract the text chunks from the results
             const snippets = searchResults.matches
                 .filter(match => match.metadata && match.metadata.text)
-                .map(match => match.metadata.text);
+                .map((match, i) => `[Source ${i + 1}]: ${match.metadata.text}`);
 
             if (snippets.length === 0) {
                 return "I found some related information but it isn't formatted correctly to read. Please contact human support.";

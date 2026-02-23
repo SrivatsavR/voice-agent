@@ -533,24 +533,24 @@ wss.on('connection', (ws) => {
 
                   // If it looks like a GST (15 chars)
                   if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
-                    const valStr = await validateGSTINTool.invoke({ gstin: cleanedBurst });
-                    const val = JSON.parse(valStr);
-                    if (val.valid) {
-                      sess.gstin = val.normalized;
+                    const val = await validateGSTINTool.invoke({ gstin: cleanedBurst });
+                    const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
+                    if (parsedVal.valid) {
+                      sess.gstin = parsedVal.normalized;
                       sess.gstin_valid = true;
-                      callLog.withComponent('Validation').info(`[Burst Success] Corrected GSTIN from burst: ${val.normalized}`);
+                      callLog.withComponent('Validation').info(`[Burst Success] Corrected GSTIN from burst: ${parsedVal.normalized}`);
                     }
                   }
                   // If it looks like an email
                   else if (burst.transcript.includes('@') || burst.transcript.includes(' at ')) {
-                    const normStr = await normalizeSpokenEmailTool.invoke({ spoken_email: burst.transcript });
-                    const norm = JSON.parse(normStr);
-                    const valStr = await validateEmailTool.invoke({ email: norm.normalized_email });
-                    const val = JSON.parse(valStr);
-                    if (val.valid) {
-                      sess.email = val.normalized;
+                    const norm = await normalizeSpokenEmailTool.invoke({ spoken_email: burst.transcript });
+                    const parsedNorm = typeof norm === 'string' ? JSON.parse(norm) : norm;
+                    const val = await validateEmailTool.invoke({ email: parsedNorm.normalized_email });
+                    const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
+                    if (parsedVal.valid) {
+                      sess.email = parsedVal.normalized;
                       sess.email_valid = true;
-                      callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${val.normalized}`);
+                      callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${parsedVal.normalized}`);
                     }
                   }
                 }

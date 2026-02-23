@@ -110,7 +110,11 @@ Refer to the current session data provided to see what is already captured.
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
 
 ── 7. HANDLING QUESTIONS ──
-If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
+If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST check if you already have the answer in the conversation history or in [SYSTEM: Knowledge Base Results].
+- If you DON'T have the answer: Set 'kb_query' in your 'updates_json' to the user's question. Acknowledge that you are checking, e.g., "Main check karke batati hoon."
+- If you DO have [SYSTEM: Knowledge Base Results] in the latest turn: Use ONLY that information to provide a crisp, friendly answer in Hindi. Do NOT use your own knowledge if it contradicts the provided context.
+- ALWAYS end every answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+- The system provides the context in the next turn under the marker [SYSTEM: Knowledge Base Results].
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -221,9 +225,10 @@ Thank the user for their time and details, then proactively ask if they have any
 1. **Initial Closing**: If 'closure_bridge_delivered' is not true, inform the user about the WhatsApp link FIRST.
    Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
    Set 'closure_bridge_delivered': true in 'updates_json'.
-2. **Handle Questions**: If the user asks a question, set 'kb_query' in 'updates_json' to their question.
-   - Reply with: "Zaroor, main check karke batati hoon." 
-   - After providing the answer from the Knowledge Base, ALWAYS end with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+2. **Handle Questions**:
+   - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Zaroor, main check karke batati hoon."
+   - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
+   - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
 3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"):
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
@@ -614,17 +619,34 @@ export function createCallSession(callerPhone = '', options = {}) {
         if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
         throw new Error('Tool object is undefined');
       }
-      if (toolObj.invoke) return await toolObj.invoke(params);
-      if (toolObj.execute) return await toolObj.execute(params);
-      if (typeof toolObj === 'function') return await toolObj(params);
 
-      if (options.logger) options.logger.error('[Workflow] Tool not executable', {
-        type: typeof toolObj,
-        hasInvoke: !!toolObj.invoke,
-        hasExecute: !!toolObj.execute,
-        keys: Object.keys(toolObj)
-      });
-      throw new Error('Tool object is not executable');
+      let result;
+      if (toolObj.invoke) {
+        result = await toolObj.invoke(params);
+      } else if (toolObj.execute) {
+        result = await toolObj.execute(params);
+      } else if (typeof toolObj === 'function') {
+        result = await toolObj(params);
+      } else {
+        if (options.logger) options.logger.error('[Workflow] Tool not executable', {
+          type: typeof toolObj,
+          keys: Object.keys(toolObj)
+        });
+        throw new Error('Tool object is not executable');
+      }
+
+      if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} result type: ${typeof result}`);
+
+      // Robust parsing: handle both objects and JSON strings
+      if (typeof result === 'string') {
+        try {
+          return JSON.parse(result);
+        } catch (e) {
+          // If it's not JSON, return the raw string (it might be a plain text response)
+          return result;
+        }
+      }
+      return result;
     };
 
     const handleBackgroundTasks = (output) => {
@@ -638,8 +660,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            const normStr = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
-            const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
+            const norm = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
             // Simple validation: check for @ and .
             if (norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
               session.email = norm.normalized_email;
@@ -710,8 +731,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             const todayISO = new Date().toISOString().split('T')[0];
-            const resStr = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
-            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
+            const res = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
             if (res?.valid) {
               session.listing_start = res.normalized;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
@@ -778,6 +798,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.kb_query) {
         const query = updates.kb_query;
         delete updates.kb_query;
+        delete session.kb_query; // Clear from session to prevent loops
         Promise.resolve().then(async () => {
           try {
             const kbResult = await runTool(searchKnowledgeBaseTool, { query });

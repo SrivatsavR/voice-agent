@@ -115,7 +115,7 @@ export const normalizeSpokenEmailTool = tool({
             .replace(/@rediffmail$/i, '@rediffmail.com')
             .replace(/@rediff$/i, '@rediffmail.com');
 
-        return JSON.stringify({ normalized_email: email });
+        return { normalized_email: email };
     }
 });
 
@@ -170,7 +170,7 @@ export const validateGSTINTool = tool({
         result.state_name = VALID_STATE_CODES[stateCode];
         result.embedded_pan = pan;
         result.entity_type = normalized[14] === 'Z' ? 'Regular' : 'Special';
-        return JSON.stringify(result);
+        return result;
     }
 });
 
@@ -205,7 +205,7 @@ export const validatePhoneTool = tool({
             result.valid = true;
             result.formatted = `+91 ${digits.substring(0, 5)} ${digits.substring(5)}`;
         }
-        return JSON.stringify(result);
+        return result;
     }
 });
 
@@ -251,7 +251,7 @@ export const validatePriceRangeTool = tool({
         result.valid = true;
         result.price_min = price_min;
         result.price_max = price_max;
-        return JSON.stringify(result);
+        return result;
     }
 });
 
@@ -285,11 +285,17 @@ export const normalizeListingDateTool = tool({
         } else if (input.includes('month') || input.includes('mahine')) {
             target.setMonth(now.getMonth() + 1);
         } else {
-            // Check if it's already a date-like thing
+            // Check if it's already a date-like thing: "12th Jan", "25 March", etc.
             const dateMatch = input.match(/(\d{1,2})[th|st|nd|rd]?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/);
             if (dateMatch) {
                 const parsed = new Date(`${dateMatch[1]} ${dateMatch[2]} 2026`);
-                if (!isNaN(parsed)) target = parsed;
+                if (!isNaN(parsed)) {
+                    target = parsed;
+                } else {
+                    return { valid: false, error: "Could not identify a listing start date." };
+                }
+            } else {
+                return { valid: false, error: "Could not identify a listing start date." };
             }
         }
 
@@ -300,10 +306,10 @@ export const normalizeListingDateTool = tool({
         const year = target.getFullYear();
         const formattedDate = `${day}/${month}/${year}`;
 
-        return JSON.stringify({
+        return {
             valid: true,
             normalized: formattedDate,
             readable: target.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
-        });
+        };
     }
 });

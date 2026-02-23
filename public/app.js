@@ -85,14 +85,16 @@ function handleLogEntry(entry) {
     }
 
     // 3. Extraction & Validation Feed
-    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'Workflow' || msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]')) {
+    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'VectorSearch' || component === 'Workflow' || msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]')) {
         let type = 'info';
-        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.includes('match')) type = 'success';
+        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.includes('match') || msg.includes('Retrieved')) type = 'success';
         if (msg.includes('Invalid') || msg.includes('Error') || msg.includes('failed') || msg.includes('Discarding')) type = 'warn';
+        if (msg.includes('Searching') || msg.includes('Querying') || msg.includes('Generating embedding')) type = 'info';
 
         let displayMsg = msg;
         if (msg.includes('processTranscript')) return; // ignore timing logs
         if (msg.includes('Processed result')) return; // ignore raw json
+        if (msg.includes('Validation Skipped')) return; // ignore skipped validation messages
 
         displayMsg = displayMsg.replace(/\[.*?\]/g, '').trim();
         if (displayMsg.length > 60) displayMsg = displayMsg.substring(0, 57) + '...';
@@ -116,6 +118,7 @@ function logIntelligence(text, type = 'info') {
     else if (lowText.includes('valid')) icon = 'shield-check';
     else if (lowText.includes('found')) icon = 'check-circle';
     else if (lowText.includes('captured')) icon = 'database';
+    else if (lowText.includes('search') || lowText.includes('query') || lowText.includes('embedding') || lowText.includes('retrieved')) icon = 'search';
 
     pill.innerHTML = `<i data-lucide="${icon}" class="w-2.5 h-2.5"></i> <span>${text}</span>`;
     extractionFeed.prepend(pill);
