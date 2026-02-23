@@ -313,17 +313,8 @@ const createDefaultSession = () => ({
 // ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
 
 function sanitizeMessage(msg) {
-  // If it's already a plain string or has standard roles, let it be.
-  // The @openai/agents framework needs tool_calls and text blocks preserved exactly as the model emitted them.
+  // Pass-through for valid OpenAI/Library objects.
   if (!msg || typeof msg !== 'object') return msg;
-
-  // Minimal cleanup: ensure content is string if it's text-only
-  if (Array.isArray(msg.content)) {
-    // If it's a simple text array, we can keep it as is or simplify to string for broader compatibility
-    // but we MUST NOT change type names to 'output_text'
-    return msg;
-  }
-
   return msg;
 }
 
@@ -403,6 +394,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   if (options.logger) {
     options.logger.info('[Workflow] Tools loaded:', {
       validateEmailTool: !!validateEmailTool,
+      validateEmailTool_props: validateEmailTool ? Object.keys(validateEmailTool) : [],
       normalizeSpokenEmailTool: !!normalizeSpokenEmailTool,
       validatePhoneTool: !!validatePhoneTool,
       validatePriceRangeTool: !!validatePriceRangeTool,
@@ -413,20 +405,15 @@ export function createCallSession(callerPhone = '', options = {}) {
 
   // ── Internal runner ─────────────────────────────────────────────────────
 
-  async function runNode(agent, userMessage, onSayChunk) {
+  async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
     return await withTrace("Reseller Qualification", async () => {
-      // Create a static System Message to reduce input tokens in instructions
+      // System message is now handled externally/consistently
       const systemMessage = sanitizeMessage({
         role: 'system',
         content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
       });
 
-      if (userMessage) {
-        conversationHistory.push(sanitizeMessage({
-          role: 'user',
-          content: userMessage
-        }));
-      }
+      // We do NOT push userMessage here anymore. It's pushed in processTranscript.
 
       // Limit conversation history to last 10 turns and sanitize
       const trimmedHistory = conversationHistory.slice(-10).map(sanitizeMessage);
@@ -475,9 +462,11 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       await stream.completed;
-      // Sanitize new items before storing
-      const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
-      conversationHistory.push(...newItems);
+      if (!nodeOptions.skipHistory) {
+        // Sanitize new items before storing
+        const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+        conversationHistory.push(...newItems);
+      }
       return stream.finalOutput;
     });
   }
@@ -615,21 +604,25 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       let result;
-      // Robust tool execution supporting multiple patterns (invoke, execute, direct function)
+      // Robust tool execution. 
+      // PRIORITY: Use .execute() for direct raw execution (returns JS objects)
+      // SECONDARY: Use .invoke() which is the library's wrapper (returns stringified JSON)
       try {
-        if (toolObj.invoke && typeof toolObj.invoke === 'function') {
-          result = await toolObj.invoke(params);
-        } else if (toolObj.execute && typeof toolObj.execute === 'function') {
+        if (toolObj.execute && typeof toolObj.execute === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .execute()`);
           result = await toolObj.execute(params);
+        } else if (toolObj.invoke && typeof toolObj.invoke === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .invoke()`);
+          result = await toolObj.invoke(params);
         } else if (typeof toolObj === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name || 'anonymous'} as function`);
           result = await toolObj(params);
         } else {
-          // Fallback check for common tool object structures
-          const runFn = toolObj.run || toolObj.call || toolObj.execute || toolObj.invoke;
+          const runFn = toolObj.run || toolObj.call;
           if (typeof runFn === 'function') {
+            if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via fallback run/call`);
             result = await runFn.call(toolObj, params);
           } else {
-            // Last resort: maybe the object itself is the function-like thing or has a 'name'
             if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} has no executable method`);
             throw new Error(`Tool object ${toolObj.name || 'unknown'} is not executable`);
           }
@@ -639,16 +632,22 @@ export function createCallSession(callerPhone = '', options = {}) {
         throw err;
       }
 
-      if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} result type: ${typeof result}`);
+      if (options.logger) {
+        const type = typeof result;
+        const preview = type === 'string' ? result.substring(0, 100) : (type === 'object' ? JSON.stringify(result).substring(0, 100) : result);
+        options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} result type: ${type}`, { preview });
+      }
 
       // Robust parsing: handle both objects and JSON strings
       if (typeof result === 'string') {
         const trimmed = result.trim();
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           try {
-            return JSON.parse(trimmed);
+            const parsed = JSON.parse(trimmed);
+            if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} JSON string parsed successfully`);
+            return parsed;
           } catch (e) {
-            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned string that looked like JSON but failed to parse: ${trimmed.substring(0, 50)}...`);
+            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned string that looked like JSON but failed to parse: ${trimmed.substring(0, 100)}...`);
             return result;
           }
         }
@@ -660,10 +659,14 @@ export function createCallSession(callerPhone = '', options = {}) {
     const handleBackgroundTasks = (output) => {
       if (!output || !output.updates) return;
       const updates = output.updates;
+      const currentProcId = currentProcessingId;
+
+      if (options.logger) options.logger.withComponent('Workflow').debug('[Background] Checking for tasks', { updates });
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
         session.bg_email_running = true;
+        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: true } });
         const candidate = updates.raw_email;
         Promise.resolve().then(async () => {
           try {
@@ -693,9 +696,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_email_running = false;
-            if (session.email_valid) {
+            const finalUpdates = { bg_email_running: false };
+            if (session.email) {
               delete session.raw_email;
+              finalUpdates.raw_email = null;
             }
+            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -735,6 +741,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 3. Listing Date Normalization
       if (updates.raw_listing_start && !session.bg_listing_running) {
         session.bg_listing_running = true;
+        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: true } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
@@ -753,9 +760,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_listing_running = false;
+            const finalUpdates = { bg_listing_running: false };
             if (session.listing_start) {
               delete session.raw_listing_start;
+              finalUpdates.raw_listing_start = null;
             }
+            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -763,6 +773,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
         session.bg_price_running = true;
+        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: true } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
         let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
@@ -793,10 +804,14 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_price_running = false;
+            const finalUpdates = { bg_price_running: false };
             if (session.price_min && !isNaN(parseFloat(session.price_min))) {
               delete session.raw_price_min;
               delete session.raw_price_max;
+              finalUpdates.raw_price_min = null;
+              finalUpdates.raw_price_max = null;
             }
+            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -862,6 +877,12 @@ export function createCallSession(callerPhone = '', options = {}) {
       userMessage = `${transcript}\n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
     }
 
+    // PUSH USER MESSAGE TO HISTORY ONCE
+    conversationHistory.push(sanitizeMessage({
+      role: 'user',
+      content: userMessage
+    }));
+
     let streamedCount = 0;
 
     const llmPromise = (async () => {
@@ -881,7 +902,7 @@ export function createCallSession(callerPhone = '', options = {}) {
                 }
               }
             }
-          });
+          }, { skipHistory: !!fastMatchResult });
         });
         if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) {
           tts.sendText(ttsBuffer);
