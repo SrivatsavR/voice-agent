@@ -313,28 +313,18 @@ const createDefaultSession = () => ({
 // ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
 
 function sanitizeMessage(msg) {
-  if (!msg.content) return msg;
+  // If it's already a plain string or has standard roles, let it be.
+  // The @openai/agents framework needs tool_calls and text blocks preserved exactly as the model emitted them.
+  if (!msg || typeof msg !== 'object') return msg;
 
-  const role = msg.role;
-  let newContent = msg.content;
-
-  if (typeof newContent === 'string') {
-    // Top-level strings are fine, the SDK converts them
+  // Minimal cleanup: ensure content is string if it's text-only
+  if (Array.isArray(msg.content)) {
+    // If it's a simple text array, we can keep it as is or simplify to string for broader compatibility
+    // but we MUST NOT change type names to 'output_text'
     return msg;
   }
 
-  if (Array.isArray(newContent)) {
-    newContent = newContent.map(item => {
-      if (typeof item === 'string') return item;
-      if (item.type === 'text') {
-        const type = (role === 'assistant') ? 'output_text' : 'input_text';
-        return { ...item, type };
-      }
-      return item;
-    });
-  }
-
-  return { ...msg, content: newContent };
+  return msg;
 }
 
 // ─── Helper: Parse agent output ───────────────────────────────────────────────
@@ -962,12 +952,26 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       const nextNode = fastMatchResult.next_node === 'CONTINUE' ? currentNode : fastMatchResult.next_node;
       if (nextNode !== currentNode) markNodeDone(currentNode);
-      currentNode = nextNode;
-      Object.assign(session, fastMatchResult.updates);
-      if (options.logger && Object.keys(fastMatchResult.updates || {}).length > 0) {
-        options.logger.withComponent('Database').info('Saving session updates', { updates: fastMatchResult.updates });
+
+      const updates = fastMatchResult.updates || {};
+      Object.assign(session, updates);
+
+      // Pushing to history for continuity
+      conversationHistory.push(sanitizeMessage({
+        role: 'assistant',
+        content: JSON.stringify({
+          say: fastMatchResult.say,
+          updates_json: JSON.stringify(updates),
+          next_node: nextNode,
+          notes: 'Fast-match'
+        })
+      }));
+
+      if (options.logger && Object.keys(updates).length > 0) {
+        options.logger.withComponent('Database').info('Saving session updates', { updates });
       }
 
+      currentNode = nextNode;
       return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
     }
 
