@@ -442,49 +442,47 @@ export function createCallSession(callerPhone = '', options = {}) {
           break;
         }
 
-        if (!event.type.includes('raw_model')) {
-
-          // Handle raw string events (non-tool calls)
-          if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
-            finalOutputText += event.data.text;
+        // Handle raw string events (non-tool calls)
+        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
+          finalOutputText += event.data.text;
+        }
+        // Handle @openai/agents v0.0.5 structured json streaming object deltas
+        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+          if (contentObj && contentObj.text) {
+            finalOutputText = contentObj.text; // the framework accumulates the full string here
           }
-          // Handle @openai/agents v0.0.5 structured json streaming object deltas
-          else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
-            const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
-            if (contentObj && contentObj.text) {
-              finalOutputText = contentObj.text; // the framework accumulates the full string here
-            }
-          }
-          else if (event.type === 'model_text_delta') {
-            finalOutputText += event.data.textDelta || event.data.delta || '';
-          }
+        }
+        else if (event.type === 'model_text_delta') {
+          finalOutputText += event.data.textDelta || event.data.delta || '';
+        }
 
-          // Try to parse 'say' from whatever we've accumulated so far
-          if (onSayChunk && finalOutputText) {
-            // Look for "say": "..." pattern. Handle opening quote through current end.
-            const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
-            if (sayMatch) {
-              const currentSay = sayMatch[1];
-              // Unescape common JSON characters
-              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+        // Try to parse 'say' from whatever we've accumulated so far
+        if (onSayChunk && finalOutputText) {
+          // Look for "say": "..." pattern. Handle opening quote through current end.
+          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+          if (sayMatch) {
+            const currentSay = sayMatch[1];
+            // Unescape common JSON characters
+            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
 
-              if (unescaped.length > sentLength) {
-                const chunk = unescaped.substring(sentLength);
-                sentLength = unescaped.length;
-                onSayChunk(chunk);
-              }
+            if (unescaped.length > sentLength) {
+              const chunk = unescaped.substring(sentLength);
+              sentLength = unescaped.length;
+              onSayChunk(chunk);
             }
           }
         }
+      }
 
-        await stream.completed;
-        if (!nodeOptions.skipHistory) {
-          // Sanitize new items before storing
-          const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
-          conversationHistory.push(...newItems);
-        }
-        return stream.finalOutput;
-      });
+      await stream.completed;
+      if (!nodeOptions.skipHistory) {
+        // Sanitize new items before storing
+        const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+        conversationHistory.push(...newItems);
+      }
+      return stream.finalOutput;
+    });
   }
 
   // ── Mark node as done when leaving it ──────────────────────────────────
