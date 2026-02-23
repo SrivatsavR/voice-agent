@@ -36,7 +36,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", "Haanji", etc. at the start of the call, they are just acknowledging they are listening. DO NOT assume they are interested. You MUST still deliver the full pitch ("Meesho par fourteen crore...") before asking if they want to sell.
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -138,7 +138,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?". Deliver this FULL pitch even if the user just says "Hi", "Hello", or "Haanji".
+  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?".
+     - **CRITICAL**: Deliver this FULL pitch even if the user just says "Hi", "Hello", or "Haanji" in their first response. Do NOT set interest_in_meesho until they confirm after hearing the pitch.
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -146,7 +147,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | Intent | Signal | Action |
 |--------|--------|--------|
 | GIVING_NAME | user provides name | Update 'name_spoken'. |
-| INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
+| INTERESTED | "yes", "theek hai", "haan", "sure", "bechna chahta hoon" | Set interest_in_meesho: "yes". |
+| ACKNOWLEDGEMENT | "haanji", "ji", "bataiye" (before pitch) | Treat as "Hi". Do NOT set interest_in_meesho. Deliver Pitch. |
 | NOT INTERESTED | "no", "nahi", "not interested" | Set interest_in_meesho: "no", next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
@@ -157,7 +159,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -182,7 +184,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -213,7 +215,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -243,7 +245,7 @@ Thank the user for their time and details, then proactively ask if they have any
 - Ensure every 'say' ends with a question, except for the final goodbye.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
@@ -546,7 +548,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
           if (!session.interest_in_meesho) {
-            // Let the LLM definitively handle "haan" if the pitch was just delivered
+            // Let the LLM handle "haanji" etc. at node start to ensure pitch is delivered
             return null;
           } else if (session.name_spoken && !session.has_bank_account) {
             return {
