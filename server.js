@@ -10,7 +10,7 @@ import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from '
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
-import { Logger, serverLog, wsLog, generateCallId, getMemoryLogs } from './utils/logger.js';
+import { Logger, serverLog, wsLog, generateCallId, getMemoryLogs, onLog } from './utils/logger.js';
 import { InterruptionManager } from './utils/interruption-manager.js';
 import { getHistory, saveToHistory } from './services/history-service.js';
 import path from 'path';
@@ -319,6 +319,30 @@ app.get('/api/logs/:callId', (req, res) => {
     serverLog.error('Error fetching memory logs', err);
     res.status(500).json({ error: 'Failed to fetch logs' });
   }
+});
+
+/**
+ * GET /api/events/:callId
+ * SSE endpoint for real-time log updates
+ */
+app.get('/api/events/:callId', (req, res) => {
+  const { callId } = req.params;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const cleanup = onLog((entry) => {
+    if (entry.callId === callId) {
+      res.write(`data: ${JSON.stringify(entry)}\n\n`);
+    }
+  });
+
+  req.on('close', () => {
+    cleanup();
+    res.end();
+  });
 });
 
 /**

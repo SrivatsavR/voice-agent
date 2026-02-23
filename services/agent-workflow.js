@@ -108,6 +108,9 @@ Refer to the current session data provided to see what is already captured.
 
 ── 6. TRANSITION RULE ──
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
+
+── 7. HANDLING QUESTIONS ──
+If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -152,9 +155,9 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap humare saath judna chahenge?".
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
   2. If interested but Name is missing: Ask "Aapka naam kya hai?".
-  3. If interested and Name is known, but Bank Account is missing: Ask "Kya aapke paas bank account hai?".
+  3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -170,7 +173,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Once all are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [searchKnowledgeBaseTool]
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -198,7 +202,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validatePriceRangeTool, normalizeListingDateTool]
+  tools: [validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -231,7 +235,8 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 - Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA }
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [searchKnowledgeBaseTool]
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -474,43 +479,76 @@ export function createCallSession(callerPhone = '', options = {}) {
   const FAST_MATCH_CONFIG = {
     'NODE_1_NAME_INTEREST': [
       {
-        pattern: /^(mera naam|my name is|main|i am|this is) (.*?)(?: hai| hoon)?$/i,
-        handle: (match) => {
+        pattern: /^(mera naam|my name is|main|i am|this is|मेरा नाम|मैं) (.*?)(?: hai| hoon|है|हूं)?$/i,
+        handle: (match, session) => {
           const name = match[2].trim();
+          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+            return {
+              updates: { name_spoken: name },
+              say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne products bechna chahte hain?`,
+              next_node: 'CONTINUE'
+            };
+          }
           return {
             updates: { name_spoken: name },
-            say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap humare saath judna chahenge?`,
+            say: `Achha, ${name} ji. Kya aapke paas bank account hai?`,
             next_node: 'CONTINUE'
           };
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye)$/i,
-        updates: {},
-        say: "Aapka naam kya hai?",
-        next_node: 'CONTINUE'
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        handle: (match, session) => {
+          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+            return {
+              updates: { interest_in_meesho: 'yes' },
+              say: "Aapka naam kya hai?",
+              next_node: 'CONTINUE'
+            };
+          } else if (session.name_spoken && !session.has_bank_account) {
+            return {
+              updates: { has_bank_account: 'yes' },
+              say: "Achha, toh bank account hai. Aap kis tarah ke items bechte hain?",
+              next_node: 'NODE_2_DETAILS'
+            };
+          }
+          return null;
+        }
       },
       {
-        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested)$/i,
+        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested|नहीं|न|नो|बिल्कुल नहीं)$/i,
         updates: { interest_in_meesho: 'no' },
         say: "Achha, koi baat nahi. Agar aapka mann badle toh humein zaroor batayiye. Dhanyavad!",
         next_node: 'TERM_NOT_INTERESTED'
       }
     ],
-    'NODE_2_BUSINESS_DETAILS': [
+    'NODE_2_DETAILS': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
-        updates: { has_bank_account: 'yes' },
-        say: "Achha, toh bank account hai. Aap kis tarah ke products bechte hain?",
-        next_node: 'CONTINUE'
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी)$/i,
+        handle: (match, session) => {
+          return null; // Let LLM extract proper intent if needed
+        }
       }
     ],
     'NODE_3_CONTACT_GST': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji)$/i,
-        updates: { has_gst_number: 'yes' },
-        say: "Sunke khushi hui! Aapka 15-digit ka GST number kya hai?",
-        next_node: 'CONTINUE'
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        handle: (match, session) => {
+          if (!session.email_valid && session.email_attempts === 0) {
+            return {
+              updates: {},
+              say: "Achi baat hai, kripya apna email address bataiye.",
+              next_node: 'CONTINUE'
+            };
+          } else if (!session.gstin && !session.gst_declined) {
+            return {
+              updates: { has_gst_number: 'yes' },
+              say: "Sunke khushi hui! Aapka 15-digit ka GST number kya hai?",
+              next_node: 'CONTINUE'
+            };
+          }
+          return null;
+        }
       }
     ]
   };
@@ -518,7 +556,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function processTranscript(transcript, tts = null, silenceFiller = null) {
     currentProcessingId++;
     const currentProcId = currentProcessingId;
-    const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!]/g, '');
+    const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|।]/g, '');
     let fastMatchResult = null;
 
     // --- Helpers ---
@@ -550,7 +588,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.email_valid = true;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').info('[Background] Email Validated');
-                // Removed processTranscript on success to avoid TTS repetition
+                if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.email_attempts = (session.email_attempts || 0) + 1;
@@ -591,7 +629,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.gstin_valid = true;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Validated');
-                // Removed processTranscript on success to avoid TTS repetition
+                if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: val.normalized, gstin_valid: true } });
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.gst_attempts = (session.gst_attempts || 0) + 1;
@@ -626,6 +664,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (res?.valid && currentProcId === currentProcessingId) {
               session.listing_start = res.normalized;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: res.normalized } });
             }
           } catch (e) {
             console.error(e);
@@ -655,6 +694,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
             }
           } catch (e) {
             console.error(e);
@@ -695,7 +735,9 @@ export function createCallSession(callerPhone = '', options = {}) {
           // Rule: Never end conversation based on regex
           if (entry.next_node && entry.next_node.startsWith('TERM_')) continue;
 
-          fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match) : entry;
+          fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
+          if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
+
           if (options.logger) options.logger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
           if (tts && isActiveCallback()) {
             tts.sendText(fastMatchResult.say);

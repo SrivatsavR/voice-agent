@@ -1,6 +1,6 @@
 let currentCallId = null;
 let currentSession = {};
-let lastRenderedLogCount = 0;
+let eventSource = null;
 let isVoiceCall = false;
 
 // Initialize Lucide icons
@@ -27,18 +27,60 @@ async function api(path, options = {}) {
     return res.json();
 }
 
+function setupRealtimeEvents(callId) {
+    if (eventSource) {
+        eventSource.close();
+    }
+
+    console.log(`[Realtime] Connecting to events for ${callId}`);
+    eventSource = new EventSource(`/api/events/${callId}`);
+
+    eventSource.onmessage = (event) => {
+        try {
+            const entry = JSON.parse(event.data);
+            handleLogEntry(entry);
+        } catch (e) {
+            console.error('Error parsing SSE event', e);
+        }
+    };
+
+    eventSource.onerror = (err) => {
+        console.warn('[Realtime] Connection lost, retrying...', err);
+        // EventSource automatically retries
+    };
+}
+
+function handleLogEntry(entry) {
+    // Only process if it's the current call and we are in voice mode or it's a critical update
+    const role = entry.component === 'Agent' ? 'agent' : (entry.component === 'User' ? 'user' : null);
+
+    if (role) {
+        let txt = stripAnsi(entry.message || '');
+        if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
+        addMessage(role, txt);
+    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && (entry.data?.updates || entry.updates)) {
+        const updates = entry.data?.updates || entry.updates;
+        console.log('[Realtime] Variable Update:', updates);
+        Object.assign(currentSession, updates);
+        updateVariables(currentSession);
+    }
+}
+
 async function startNewSession() {
     const data = await api('/api/chat', { method: 'POST', body: {} });
     currentCallId = data.callId;
     currentSession = data.session || {};
     isVoiceCall = false;
-    lastRenderedLogCount = 0;
 
     chatMessages.innerHTML = '';
     callIdDisplay.textContent = `ID: ${currentCallId}`;
     addMessage('agent', data.say);
     updateVariables(currentSession);
     refreshHistory();
+
+    // Web chat doesn't strictly need SSE for its own responses (handled in sendMessage),
+    // but we connect anyway to keep logic consistent.
+    setupRealtimeEvents(currentCallId);
 }
 
 async function sendMessage(text) {
@@ -56,6 +98,7 @@ async function sendMessage(text) {
         addMessage('system', 'Previous session expired. Starting new conversation.');
         currentCallId = data.callId;
         callIdDisplay.textContent = `ID: ${currentCallId}`;
+        setupRealtimeEvents(currentCallId);
     }
 
     if (data.say) addMessage('agent', data.say);
@@ -88,24 +131,34 @@ async function refreshHistory() {
         `;
 
         div.onclick = () => {
+            if (currentCallId === call.callId && isVoiceCall) return; // Already on it
+
             currentCallId = call.callId;
             currentSession = call;
             isVoiceCall = (call.caller_phone && call.caller_phone !== 'chat-user');
-            lastRenderedLogCount = 0;
+
             chatMessages.innerHTML = '';
             callIdDisplay.textContent = `ID: ${currentCallId}`;
             updateVariables(currentSession);
-            div.classList.add('bg-white/10', 'border-indigo-500/50');
+            setupRealtimeEvents(currentCallId);
+
+            // Fetch historical logs to backfill chat window
+            backfillLogs(currentCallId);
         };
         historyList.appendChild(div);
 
-        // Auto-select if nothing selected or if this is an active call and we were idle
-        if (!currentCallId || (call.call_outcome === 'in_progress' && !currentCallId.startsWith('c-'))) {
-            if (!currentCallId || call.call_outcome === 'in_progress') {
-                div.onclick();
-            }
+        // Auto-select if nothing selected OR if there is an active call we aren't currently viewing
+        if (!currentCallId || (call.call_outcome === 'in_progress' && !isVoiceCall)) {
+            div.onclick();
         }
     });
+}
+
+async function backfillLogs(callId) {
+    try {
+        const logs = await api(`/api/logs/${callId}`);
+        logs.forEach(entry => handleLogEntry(entry));
+    } catch (e) { }
 }
 
 function stripAnsi(str) {
@@ -114,6 +167,12 @@ function stripAnsi(str) {
 }
 
 function addMessage(role, text) {
+    if (!text) return;
+
+    // Prevent duplicates (simple check for same role/text in consecutive messages)
+    const last = chatMessages.lastElementChild;
+    if (last && last.querySelector('p').textContent === text) return;
+
     const div = document.createElement('div');
     div.className = `flex flex-col gap-1.5 ${role === 'user' ? 'items-end' : 'items-start'}`;
 
@@ -171,35 +230,6 @@ function updateVariables(session) {
     lucide.createIcons();
 }
 
-async function pollUpdates() {
-    if (!currentCallId) return;
-
-    try {
-        const logs = await api(`/api/logs/${currentCallId}`);
-        if (logs.length > lastRenderedLogCount) {
-            for (let i = lastRenderedLogCount; i < logs.length; i++) {
-                const entry = logs[i];
-                if (isVoiceCall) {
-                    if (entry.component === 'Agent') {
-                        let txt = stripAnsi(entry.message || '');
-                        if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
-                        addMessage('agent', txt);
-                    } else if (entry.component === 'User') {
-                        addMessage('user', stripAnsi(entry.message));
-                    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && (entry.data?.updates || entry.updates)) {
-                        const updates = entry.data?.updates || entry.updates;
-                        Object.assign(currentSession, updates);
-                        updateVariables(currentSession);
-                    }
-                }
-            }
-            lastRenderedLogCount = logs.length;
-        }
-    } catch (e) { }
-
-    setTimeout(pollUpdates, 1500);
-}
-
 // --- Interaction ---
 chatForm.onsubmit = (e) => {
     e.preventDefault();
@@ -234,6 +264,8 @@ triggerCallBtn.onclick = async () => {
 
         if (data.success) {
             addMessage('system', `Call triggered!`);
+            // Refresh history immediately to pick up the new call
+            refreshHistory();
         } else {
             addMessage('system', `Error: ${data.error}`);
         }
@@ -248,5 +280,4 @@ triggerCallBtn.onclick = async () => {
 
 // Start
 startNewSession();
-pollUpdates();
 setInterval(refreshHistory, 5000);

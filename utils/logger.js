@@ -4,6 +4,12 @@ import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 
 const logStorage = new AsyncLocalStorage();
+const logEvents = new Set();
+
+export function onLog(callback) {
+    logEvents.add(callback);
+    return () => logEvents.delete(callback);
+}
 
 // ─── Log Levels ──────────────────────────────────────────────────────────────
 
@@ -212,6 +218,11 @@ export class Logger {
         if (data) entry.data = data;
         memoryLogs.push(entry);
         if (memoryLogs.length > MAX_MEMORY_LOGS) memoryLogs.shift();
+
+        // Emit to listeners (e.g. for SSE)
+        for (const listener of logEvents) {
+            try { listener(entry); } catch { }
+        }
 
         // File output (JSON structured)
         if (FILE_LOGGING_ENABLED) {
