@@ -85,7 +85,8 @@ function handleLogEntry(entry) {
     }
 
     // 3. Extraction & Validation Feed
-    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'VectorSearch' || component === 'Workflow' || msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]')) {
+    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'VectorSearch' || component === 'Workflow' ||
+        msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]')) {
         let type = 'info';
         if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.includes('match') || msg.includes('Retrieved')) type = 'success';
         if (msg.includes('Invalid') || msg.includes('Error') || msg.includes('failed') || msg.includes('Discarding')) type = 'warn';
@@ -95,6 +96,7 @@ function handleLogEntry(entry) {
         if (msg.includes('processTranscript')) return; // ignore timing logs
         if (msg.includes('Processed result')) return; // ignore raw json
         if (msg.includes('Validation Skipped')) return; // ignore skipped validation messages
+        if (msg.includes('Generated embedding vector')) return; // ignore technical vector logs
 
         displayMsg = displayMsg.replace(/\[.*?\]/g, '').trim();
         if (displayMsg.length > 60) displayMsg = displayMsg.substring(0, 57) + '...';
