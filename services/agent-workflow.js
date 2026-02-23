@@ -138,8 +138,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?". Deliver this FULL pitch even if the user just says "Hi" or "Hello".
-  2. If interested but Name is missing: Ask "Aapka poora naam kya hai?" or "Kya aap apna poora naam bata sakte hain?".
+  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?". Deliver this FULL pitch even if the user just says "Hi", "Hello", or "Haanji".
+  2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
@@ -230,9 +230,10 @@ Thank the user for their time and details, then proactively ask if they have any
    - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Zaroor, main check karke batati hoon."
    - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
    - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"):
+3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi"):
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
+   - **WARNING**: Do NOT use TERM_COMPLETE if the user says "theek hai" or "okay" after an answer; instead, ask the bridge again.
 
 === RULES ===
 - NEVER ask if the user is interested in Meesho again; that was already confirmed in Node 1.
@@ -632,10 +633,12 @@ export function createCallSession(callerPhone = '', options = {}) {
           result = await toolObj(params);
         } else {
           // Fallback check for common tool object structures
-          const runFn = toolObj.run || toolObj.call;
+          const runFn = toolObj.run || toolObj.call || toolObj.execute || toolObj.invoke;
           if (typeof runFn === 'function') {
             result = await runFn.call(toolObj, params);
           } else {
+            // Last resort: maybe the object itself is the function-like thing or has a 'name'
+            if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} has no executable method`);
             throw new Error(`Tool object ${toolObj.name || 'unknown'} is not executable`);
           }
         }
@@ -973,10 +976,19 @@ export function createCallSession(callerPhone = '', options = {}) {
       const query = finalLLMOutput.updates.kb_query;
       if (options.logger) options.logger.info(`[Chat-RAG] Sync-handling query: ${query}`);
 
+      // CRITICAL: Save current turn updates BEFORE recursing, otherwise they are lost
+      Object.assign(session, finalLLMOutput.updates);
+      const prevNode = currentNode;
+      currentNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+      if (currentNode !== prevNode) markNodeDone(prevNode);
+
       try {
         const kbResult = await runTool(searchKnowledgeBaseTool, { query });
         // Perform recursive turn synchronously
-        return await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null);
+        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null);
+        // Important: merge recursive results back to session if they aren't already
+        Object.assign(session, recursiveResult.session);
+        return recursiveResult;
       } catch (err) {
         if (options.logger) options.logger.error('[Chat-RAG] Sync KB query failed', err);
         // Fallback to the acknowledgment "Main check karke batati hoon"

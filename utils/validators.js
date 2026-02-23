@@ -81,7 +81,7 @@ export const validateEmailTool = tool({
         return result; // RETURN OBJECT DIRECTLY so tool callers don't have to JSON.parse
     }
 });
-validateEmailTool.invoke = (args) => validateEmailTool.execute(args);
+validateEmailTool.invoke = (args) => (validateEmailTool.execute ? validateEmailTool.execute(args) : validateEmailTool(args));
 
 // ─── Spoken Email Normalizer Tool ─────────────────────────────────────────────
 
@@ -119,7 +119,7 @@ export const normalizeSpokenEmailTool = tool({
         return { normalized_email: email };
     }
 });
-normalizeSpokenEmailTool.invoke = (args) => normalizeSpokenEmailTool.execute(args);
+normalizeSpokenEmailTool.invoke = (args) => (normalizeSpokenEmailTool.execute ? normalizeSpokenEmailTool.execute(args) : normalizeSpokenEmailTool(args));
 
 // validateGSTINTool removed as per user request
 
@@ -157,7 +157,7 @@ export const validatePhoneTool = tool({
         return result;
     }
 });
-validatePhoneTool.invoke = (args) => validatePhoneTool.execute(args);
+validatePhoneTool.invoke = (args) => (validatePhoneTool.execute ? validatePhoneTool.execute(args) : validatePhoneTool(args));
 
 // ─── Price Range Validation Tool ──────────────────────────────────────────────
 
@@ -204,7 +204,7 @@ export const validatePriceRangeTool = tool({
         return result;
     }
 });
-validatePriceRangeTool.invoke = (args) => validatePriceRangeTool.execute(args);
+validatePriceRangeTool.invoke = (args) => (validatePriceRangeTool.execute ? validatePriceRangeTool.execute(args) : validatePriceRangeTool(args));
 
 // ─── Listing Date Normalization Tool ──────────────────────────────────────────
 
@@ -264,4 +264,4 @@ export const normalizeListingDateTool = tool({
         };
     }
 });
-normalizeListingDateTool.invoke = (args) => normalizeListingDateTool.execute(args);
+normalizeListingDateTool.invoke = (args) => (normalizeListingDateTool.execute ? normalizeListingDateTool.execute(args) : normalizeListingDateTool(args));
