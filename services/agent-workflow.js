@@ -5,11 +5,7 @@ import {
   normalizeSpokenEmailTool,
   validatePhoneTool,
   validatePriceRangeTool,
-  normalizeListingDateTool,
-  validateEmailTool as validateEmail,
-  normalizeSpokenEmailTool as normalizeSpokenEmail,
-  validatePriceRangeTool as validatePriceRange,
-  normalizeListingDateTool as normalizeListingDate
+  normalizeListingDateTool
 } from '../utils/validators.js';
 import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
@@ -48,7 +44,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - **CHECK CONTEXT**: Check [SYSTEM: Current session variables] before every response. Do NOT ask for information that is already present.
 - **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates_json" object immediately and acknowledge it naturally.
 - **CRISP HINDI**: Use short, direct questions. Avoid "Aapka", "Jaan sakte hain", etc. if not needed.
-  - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
+  - "Aapka poora naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === DATA TYPES FOR UPDATES_JSON ===
@@ -125,6 +121,7 @@ const DATA_INTERPRETATION_CONTEXT = `
 - Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
 - GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase.
 - Phone numbers: Normalize to 10 digits if mentioned.
+- Dates: Always normalize relative dates (kal, parso, tomorrow, etc.) to "DD/Month/YYYY" format.
 `;
 
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
@@ -137,7 +134,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
   1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?". Deliver this FULL pitch even if the user just says "Hi" or "Hello".
-  2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
+  2. If interested but Name is missing: Ask "Aapka poora naam kya hai?" or "Kya aap apna poora naam bata sakte hain?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
@@ -208,7 +205,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
 - Do NOT repeat questions if data is in system context.
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally. Your 'say' MUST be: "Bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?".`,
+- Move to NODE_4_CLOSURE naturally. Your 'say' MUST be: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?".`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -221,8 +218,8 @@ const closureAgent = new Agent({
 Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
 
 === FLOW ===
-1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
-   Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+1. **Initial Closing**: Inform the user about the WhatsApp link FIRST.
+   Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
 2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
    - Reply with: "Zaroor, main check karke batati hoon." 
    - Wait for the system to provide the Knowledge Base info in the next turn.
@@ -398,6 +395,18 @@ export function createCallSession(callerPhone = '', options = {}) {
       workflow_id: "wf_meesho_reseller_v3"
     }
   });
+
+  // Debug: Log tool availability
+  if (options.logger) {
+    options.logger.info('[Workflow] Tools loaded:', {
+      validateEmailTool: !!validateEmailTool,
+      normalizeSpokenEmailTool: !!normalizeSpokenEmailTool,
+      validatePhoneTool: !!validatePhoneTool,
+      validatePriceRangeTool: !!validatePriceRangeTool,
+      normalizeListingDateTool: !!normalizeListingDateTool,
+      searchKnowledgeBaseTool: !!searchKnowledgeBaseTool
+    });
+  }
 
   // ── Internal runner ─────────────────────────────────────────────────────
 
@@ -597,8 +606,18 @@ export function createCallSession(callerPhone = '', options = {}) {
 
     // --- Helpers ---
     const runTool = async (toolObj, params) => {
+      if (!toolObj) {
+        if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
+        throw new Error('Tool object is undefined');
+      }
       if (toolObj.execute) return await toolObj.execute(params);
       if (typeof toolObj === 'function') return await toolObj(params);
+
+      if (options.logger) options.logger.error('[Workflow] Tool not executable', {
+        type: typeof toolObj,
+        hasExecute: !!toolObj.execute,
+        keys: Object.keys(toolObj)
+      });
       throw new Error('Tool object is not executable');
     };
 
@@ -801,7 +820,10 @@ export function createCallSession(callerPhone = '', options = {}) {
     let userMessage = transcript;
     if (currentNode !== 'NODE_0_WELCOME') {
       const activeData = Object.fromEntries(Object.entries(session).filter(([k, v]) => k !== 'caller_phone' && v !== '' && v !== null && v !== 0 && (Array.isArray(v) ? v.length > 0 : true)));
-      userMessage = `${transcript}\n\n[SYSTEM: Date: ${new Date().toISOString().split('T')[0]}, Session: ${JSON.stringify(activeData)}]`;
+      const today = new Date();
+      const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const formattedToday = `${today.getDate().toString().padStart(2, '0')}/${monthNames[today.getMonth()]}/${today.getFullYear()}`;
+      userMessage = `${transcript}\n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
     }
 
     let streamedCount = 0;

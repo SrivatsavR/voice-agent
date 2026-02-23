@@ -293,10 +293,17 @@ export const normalizeListingDateTool = tool({
             }
         }
 
+        // Return in DD/Month/YYYY format as requested
+        const day = target.getDate().toString().padStart(2, '0');
+        const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+        const month = monthNames[target.getMonth()];
+        const year = target.getFullYear();
+        const formattedDate = `${day}/${month}/${year}`;
+
         return JSON.stringify({
             valid: true,
-            normalized: target.toISOString().split('T')[0],
-            readable: target.toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })
+            normalized: formattedDate,
+            readable: target.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
         });
     }
 });
