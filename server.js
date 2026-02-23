@@ -22,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // detect silence after 10s
-const SILENCE_FILLER_TIMEOUT_MS = 10000;
+const SILENCE_FILLER_TIMEOUT_MS = 12000;
 
 /**
  * SilenceFillerManager
@@ -513,6 +513,11 @@ wss.on('connection', (ws) => {
         const myProcessingId = ++currentProcessingId;
 
         try {
+          // 1. Immediately pause and reset the silence filler to prevent it firing during processing
+          silenceFiller?.reset();
+          silenceFiller?.pause();
+          isProcessingTranscript = true;
+
           // --- Background "Burst" Correction ---
           // If we are in GST or Email nodes, send the raw audio to Deepgram REST for a "second opinion" (high accuracy)
           const currentNode = callSession?.getCurrentNode();

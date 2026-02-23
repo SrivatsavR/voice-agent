@@ -42,7 +42,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. Treat this as affirmative interest and move to your next missing field (Name, Bank Account, etc.).
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -189,13 +189,14 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' is missing, ask: "Aur in items ki price range kya rehti hai?"
-3. **Speed**: If 'listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
+2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?"
+3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
    - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
-- If user provides price range, set 'raw_price_min' and 'raw_price_max' in 'updates_json' directly.
+- If user provides price range (e.g. "100-200" or "so se do so"), you MUST extract numerical values for 'raw_price_min' and 'raw_price_max' and put them in 'updates_json'.
+- NEVER ask the price range if 'price_min' or 'raw_price_min' is present in context.
 
 === ROUTING ===
 - Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
@@ -501,8 +502,8 @@ export function createCallSession(callerPhone = '', options = {}) {
         handle: (match, session) => {
           if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
             return {
-              updates: { interest_in_meesho: 'yes' },
-              say: "Aapka naam kya hai?",
+              updates: {}, // Explicitly do NOT set interest yet
+              say: "Ji. Meesho par fourteen crore customers hain aur zero commission hai. Kya aap hamare saath products bechna chahte hain?",
               next_node: 'CONTINUE'
             };
           } else if (session.name_spoken && !session.has_bank_account) {
@@ -583,12 +584,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             const valStr = await runTool(validateEmailTool, { email: norm.normalized_email });
             const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
 
-            if (val?.valid && currentProcId === currentProcessingId) {
+            if (val?.valid) {
               session.email = val.normalized;
               session.email_valid = true;
-              if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').info('[Background] Email Validated');
-                if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
+              if (options.logger) {
+                options.logger.withComponent('Validation').info('[Background] Email Validated');
+                options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
               session.email_attempts = (session.email_attempts || 0) + 1;
@@ -661,7 +662,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             const todayISO = new Date().toISOString().split('T')[0];
             const resStr = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
             const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
-            if (res?.valid && currentProcId === currentProcessingId) {
+            if (res?.valid) {
               session.listing_start = res.normalized;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
               if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: res.normalized } });
@@ -681,8 +682,10 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
         session.bg_price_running = true;
-        const pMin = parseFloat(updates.raw_price_min || session.price_min || 0);
-        const pMax = parseFloat(updates.raw_price_max || session.price_max || 0);
+        let pMin = parseFloat(updates.raw_price_min || session.price_min || 0);
+        let pMax = parseFloat(updates.raw_price_max || session.price_max || 0);
+        if (isNaN(pMin)) pMin = 0;
+        if (isNaN(pMax)) pMax = 0;
         delete updates.raw_price_min;
         delete updates.raw_price_max;
 
@@ -690,11 +693,14 @@ export function createCallSession(callerPhone = '', options = {}) {
           try {
             const resStr = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
             const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
-            if (res?.valid && currentProcId === currentProcessingId) {
+            if (res?.valid) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
               if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
+            } else {
+              delete session.raw_price_min;
+              delete session.raw_price_max;
             }
           } catch (e) {
             console.error(e);

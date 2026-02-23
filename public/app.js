@@ -16,6 +16,7 @@ const historyList = document.getElementById('history-list');
 const resetBtn = document.getElementById('reset-session');
 const triggerCallBtn = document.getElementById('trigger-call');
 const outboundPhoneInput = document.getElementById('outbound-phone');
+const extractionFeed = document.getElementById('extraction-feed');
 
 // --- API Functions ---
 async function api(path, options = {}) {
@@ -51,19 +52,69 @@ function setupRealtimeEvents(callId) {
 }
 
 function handleLogEntry(entry) {
-    // Only process if it's the current call and we are in voice mode or it's a critical update
-    const role = entry.component === 'Agent' ? 'agent' : (entry.component === 'User' ? 'user' : null);
+    const msg = stripAnsi(entry.message || '');
+    const component = entry.component;
 
+    // 1. Chat messages
+    const role = component === 'Agent' ? 'agent' : (component === 'User' ? 'user' : null);
     if (role) {
-        let txt = stripAnsi(entry.message || '');
+        let txt = msg;
         if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
         addMessage(role, txt);
-    } else if (entry.component === 'Database' && entry.message === 'Saving session updates' && (entry.data?.updates || entry.updates)) {
+    }
+
+    // 2. Intelligent Variable Updates
+    else if (component === 'Database' && msg === 'Saving session updates' && (entry.data?.updates || entry.updates)) {
         const updates = entry.data?.updates || entry.updates;
-        console.log('[Realtime] Variable Update:', updates);
         Object.assign(currentSession, updates);
         updateVariables(currentSession);
+
+        const keys = Object.keys(updates).filter(k => !k.endsWith('_valid') && !k.startsWith('bg_'));
+        if (keys.length > 0) {
+            logIntelligence(`Captured ${keys.join(', ')}`, 'success');
+        }
     }
+
+    // 3. Extraction & Validation Feed
+    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'Workflow' || msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]')) {
+        let type = 'info';
+        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.includes('match')) type = 'success';
+        if (msg.includes('Invalid') || msg.includes('Error') || msg.includes('failed') || msg.includes('Discarding')) type = 'warn';
+
+        let displayMsg = msg;
+        if (msg.includes('processTranscript')) return; // ignore timing logs
+        if (msg.includes('Processed result')) return; // ignore raw json
+
+        displayMsg = displayMsg.replace(/\[.*?\]/g, '').trim();
+        if (displayMsg.length > 60) displayMsg = displayMsg.substring(0, 57) + '...';
+
+        logIntelligence(displayMsg, type);
+    }
+}
+
+function logIntelligence(text, type = 'info') {
+    if (!extractionFeed) return;
+
+    if (extractionFeed.querySelector('p.italic')) extractionFeed.innerHTML = '';
+
+    const pill = document.createElement('div');
+    pill.className = `extraction-pill ${type === 'success' ? 'success' : (type === 'warn' ? 'warn' : '')}`;
+
+    let icon = 'info';
+    const lowText = text.toLowerCase();
+    if (lowText.includes('burst')) icon = 'zap';
+    else if (lowText.includes('fast-match')) icon = 'zap';
+    else if (lowText.includes('valid')) icon = 'shield-check';
+    else if (lowText.includes('found')) icon = 'check-circle';
+    else if (lowText.includes('captured')) icon = 'database';
+
+    pill.innerHTML = `<i data-lucide="${icon}" class="w-2.5 h-2.5"></i> <span>${text}</span>`;
+    extractionFeed.prepend(pill);
+
+    while (extractionFeed.children.length > 6) {
+        extractionFeed.removeChild(extractionFeed.lastChild);
+    }
+    lucide.createIcons();
 }
 
 async function startNewSession() {
@@ -199,6 +250,7 @@ function updateVariables(session) {
         { key: 'interest_in_meesho', label: 'Interest', icon: 'check-circle' },
         { key: 'has_bank_account', label: 'Bank Account?', icon: 'credit-card' },
         { key: 'products_sold', label: 'Category', icon: 'package' },
+        { key: 'price_min', label: 'Price Range', icon: 'indian-rupee', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : null) },
         { key: 'listing_start', label: 'Ready By', icon: 'calendar' },
         { key: 'email', label: 'Email', icon: 'mail' },
         { key: 'gstin', label: 'GST', icon: 'shield-check' }
@@ -206,22 +258,33 @@ function updateVariables(session) {
 
     sessionVariables.innerHTML = '';
     targets.forEach(target => {
-        let val = session[target.key];
+        let val = target.format ? target.format(session) : session[target.key];
         const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true);
+
+        // Determine "Syncing" state
+        let isSyncing = false;
+        if (target.key === 'email' && session.bg_email_running) isSyncing = true;
+        if (target.key === 'gstin' && session.bg_gst_running) isSyncing = true;
+        if (target.key === 'listing_start' && session.bg_listing_running) isSyncing = true;
+        if (target.key === 'price_min' && session.bg_price_running) isSyncing = true;
 
         const div = document.createElement('div');
         div.className = `variable-card col-span-1 p-2 rounded-xl flex items-center gap-2 group ${isCaptured ? 'captured' : 'opacity-40'}`;
 
-        if (Array.isArray(val)) val = val[0]; // Compact
-        const displayVal = isCaptured ? (val.toString().length > 12 ? val.toString().substring(0, 10) + '..' : val) : '--';
+        let displayVal = isSyncing ? 'Syncing...' : '--';
+        if (isCaptured) {
+            const rawVal = Array.isArray(val) ? val[0] : val;
+            displayVal = rawVal.toString().length > 15 ? rawVal.toString().substring(0, 13) + '..' : rawVal;
+        }
 
         div.innerHTML = `
-            <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-white/20'} shrink-0">
+            <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-400' : (isSyncing ? 'bg-indigo-500/20 text-indigo-400' : 'bg-white/5 text-white/20')} shrink-0 relative">
                 <i data-lucide="${target.icon}" class="w-3 h-3"></i>
+                ${isSyncing ? '<div class="absolute -top-1 -right-1 syncing-dot"></div>' : ''}
             </div>
             <div class="min-w-0">
                 <div class="text-[8px] uppercase font-bold text-white/30 truncate">${target.label}</div>
-                <div class="text-[10px] font-bold ${isCaptured ? 'text-white/90' : 'text-white/10'} truncate">${displayVal}</div>
+                <div class="text-[10px] font-bold ${isCaptured ? 'text-white/90' : (isSyncing ? 'text-indigo-400 animate-pulse' : 'text-white/10')} truncate">${displayVal}</div>
             </div>
         `;
         sessionVariables.appendChild(div);
