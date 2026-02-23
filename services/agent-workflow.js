@@ -199,7 +199,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - NEVER ask the price range if 'price_min' or 'raw_price_min' is present in context.
 
 === ROUTING ===
-- Stay in NODE_2_DETAILS until Items, Price, and listing_start are captured.
+- Stay in NODE_2_DETAILS until all questions are answered ('products_sold', 'price_min'/'raw_price_min', and 'listing_start'/'raw_listing_start' are collected).
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
@@ -217,16 +217,16 @@ ${DATA_INTERPRETATION_CONTEXT}
 Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing, ask: "Kya aap apna email address bata sakte hai?"
-2. **GST**: If 'gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas GST number hai?"
+1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
+2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
 3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | 1. Say "Ek minute." 2. Set 'raw_email' in 'updates_json'. |
+| GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
 | HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
-| GIVING_GST | user provides GST/UIN | 1. Capture into 'gstin' in 'updates_json'. 2. Set 'gstin_valid': true (trust the capture). |
+| GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
 | NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
 | GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
@@ -575,7 +575,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.raw_email && !session.bg_email_running) {
         session.bg_email_running = true;
         const candidate = updates.raw_email;
-        delete updates.raw_email;
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
@@ -606,6 +605,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_email_running = false;
+            delete session.raw_email;
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -615,7 +615,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.raw_gstin && !session.bg_gst_running) {
         session.bg_gst_running = true;
         const candidate = updates.raw_gstin;
-        delete updates.raw_gstin;
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
@@ -647,6 +646,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_gst_running = false;
+            delete session.raw_gstin;
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -656,7 +656,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.raw_listing_start && !session.bg_listing_running) {
         session.bg_listing_running = true;
         const candidate = updates.raw_listing_start;
-        delete updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
             const todayISO = new Date().toISOString().split('T')[0];
@@ -675,6 +674,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_listing_running = false;
+            delete session.raw_listing_start;
           }
         });
       }
@@ -682,15 +682,21 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
         session.bg_price_running = true;
-        let pMin = parseFloat(updates.raw_price_min || session.price_min || 0);
-        let pMax = parseFloat(updates.raw_price_max || session.price_max || 0);
-        if (isNaN(pMin)) pMin = 0;
-        if (isNaN(pMax)) pMax = 0;
-        delete updates.raw_price_min;
-        delete updates.raw_price_max;
+        let originalMin = updates.raw_price_min || session.price_min || "";
+        let originalMax = updates.raw_price_max || session.price_max || "";
+        let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
+        let pMax = parseFloat(updates.raw_price_max !== undefined ? updates.raw_price_max : session.price_max || 0);
 
         Promise.resolve().then(async () => {
           try {
+            if (isNaN(pMin) || isNaN(pMax)) {
+              if (options.logger) options.logger.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
+              if (isActiveCallback() && currentProcId === currentProcessingId) {
+                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
+              }
+              return;
+            }
+
             const resStr = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
             const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
             if (res?.valid) {
@@ -698,9 +704,6 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
               if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
-            } else {
-              delete session.raw_price_min;
-              delete session.raw_price_max;
             }
           } catch (e) {
             console.error(e);
@@ -710,6 +713,8 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_price_running = false;
+            delete session.raw_price_min;
+            delete session.raw_price_max;
           }
         });
       }
