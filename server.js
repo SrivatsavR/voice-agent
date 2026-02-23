@@ -533,7 +533,7 @@ wss.on('connection', (ws) => {
 
                   // If it looks like a GST (15 chars)
                   if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
-                    const valStr = await validateGSTINTool.execute({ gstin: cleanedBurst });
+                    const valStr = await validateGSTINTool.invoke({ gstin: cleanedBurst });
                     const val = JSON.parse(valStr);
                     if (val.valid) {
                       sess.gstin = val.normalized;
@@ -543,9 +543,9 @@ wss.on('connection', (ws) => {
                   }
                   // If it looks like an email
                   else if (burst.transcript.includes('@') || burst.transcript.includes(' at ')) {
-                    const normStr = await normalizeSpokenEmailTool.execute({ spoken_email: burst.transcript });
+                    const normStr = await normalizeSpokenEmailTool.invoke({ spoken_email: burst.transcript });
                     const norm = JSON.parse(normStr);
-                    const valStr = await validateEmailTool.execute({ email: norm.normalized_email });
+                    const valStr = await validateEmailTool.invoke({ email: norm.normalized_email });
                     const val = JSON.parse(valStr);
                     if (val.valid) {
                       sess.email = val.normalized;

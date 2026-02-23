@@ -610,11 +610,13 @@ export function createCallSession(callerPhone = '', options = {}) {
         if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
         throw new Error('Tool object is undefined');
       }
+      if (toolObj.invoke) return await toolObj.invoke(params);
       if (toolObj.execute) return await toolObj.execute(params);
       if (typeof toolObj === 'function') return await toolObj(params);
 
       if (options.logger) options.logger.error('[Workflow] Tool not executable', {
         type: typeof toolObj,
+        hasInvoke: !!toolObj.invoke,
         hasExecute: !!toolObj.execute,
         keys: Object.keys(toolObj)
       });
