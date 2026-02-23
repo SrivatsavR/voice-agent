@@ -258,7 +258,7 @@ export const TERMINAL_NODES = new Set([
 
 // ─── Default Session State ────────────────────────────────────────────────────
 
-const DEFAULT_SESSION = {
+const createDefaultSession = () => ({
   caller_phone: '',
   // Node 1
   name_spoken: '',
@@ -295,7 +295,7 @@ const DEFAULT_SESSION = {
   node2_done: false,
   node3_done: false,
   node4_done: false,
-};
+});
 
 // ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
 
@@ -385,7 +385,7 @@ function parseAgentOutput(rawOutput) {
 
 export function createCallSession(callerPhone = '', options = {}) {
   const conversationHistory = [];
-  const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
+  const session = { ...createDefaultSession(), caller_phone: callerPhone };
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
 

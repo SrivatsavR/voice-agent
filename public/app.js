@@ -53,6 +53,14 @@ function setupRealtimeEvents(callId) {
 }
 
 function handleLogEntry(entry) {
+    if (entry.callId !== currentCallId) {
+        // Still refresh history if a background session finished, so the outcome updates
+        if (entry.component === 'Call' && entry.message.includes('reached terminal node')) {
+            refreshHistory();
+        }
+        return;
+    }
+
     const msg = stripAnsi(entry.message || '');
     const component = entry.component;
 
