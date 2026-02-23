@@ -33,16 +33,21 @@ export const searchKnowledgeBaseTool = tool({
         question: z.string().describe('Alias for query.').nullable()
     }),
     execute: async (params) => {
-        const query = params.query || params.question;
-        if (!query) return "Please ask a specific question.";
         try {
+            const query = params.query || params.question;
+            if (!query) return JSON.stringify({ success: false, error: "Please ask a specific question.", timestamp: Date.now() });
+
             if (!pineconeIndex || !pc) {
-                return "I'm sorry, my knowledge base is currently offline. Is there anything else I can assist you with?";
+                return JSON.stringify({
+                    success: true,
+                    data: "I'm sorry, my knowledge base is currently offline. Is there anything else I can assist you with?",
+                    timestamp: Date.now()
+                });
             }
 
             log.info(`Generating embedding for query: "${query}"`);
 
-            // 1. Generate an embedding for the user's question using Pinecone Inference
+            // 1. Generate an embedding for the user's question
             const embeddingResponse = await pc.inference.embed({
                 model: 'llama-text-embed-v2',
                 inputs: [query],
@@ -50,38 +55,49 @@ export const searchKnowledgeBaseTool = tool({
             });
 
             const queryVector = embeddingResponse.data[0].values;
-            log.info(`Generated embedding vector (first 5 of ${queryVector.length})`, queryVector.slice(0, 5));
 
-            // 2. Query Pinecone using the embedding
-            log.info(`Querying Pinecone index: ${PINECONE_INDEX_NAME}`);
+            // 2. Query Pinecone
             const searchResults = await pineconeIndex.query({
                 vector: queryVector,
-                topK: 5, // Increased to provide more context
+                topK: 5,
                 includeMetadata: true,
             });
 
             if (!searchResults.matches || searchResults.matches.length === 0) {
-                return "I couldn't find a specific answer to that question in my documentation.";
+                return JSON.stringify({
+                    success: true,
+                    data: "I couldn't find a specific answer to that question in my documentation.",
+                    timestamp: Date.now()
+                });
             }
 
-            // 3. Extract the text chunks from the results
+            // 3. Extract text
             const snippets = searchResults.matches
                 .filter(match => match.metadata && match.metadata.text)
                 .map((match, i) => `[Source ${i + 1}]: ${match.metadata.text}`);
 
             if (snippets.length === 0) {
-                return "I found some related information but it isn't formatted correctly to read. Please contact human support.";
+                return JSON.stringify({
+                    success: true,
+                    data: "I found some related information but it isn't formatted correctly. Please contact human support.",
+                    timestamp: Date.now()
+                });
             }
 
-            // Compile the relevant pieces for the LLM to read and synthesize into an answer
             const combinedContext = snippets.join('\n\n---\n\n');
-            log.info(`Retrieved ${snippets.length} relevant context chunks from Pinecone`, snippets);
-
-            return `Information from the Knowledge Base:\n${combinedContext}`;
+            return JSON.stringify({
+                success: true,
+                data: `Information from the Knowledge Base:\n${combinedContext}`,
+                timestamp: Date.now()
+            });
 
         } catch (error) {
             log.error('Knowledge Base Search Error', error);
-            return "An error occurred while searching the knowledge base. Please let the user know you cannot answer right now.";
+            return JSON.stringify({
+                success: false,
+                error: "An error occurred while searching the knowledge base.",
+                timestamp: Date.now()
+            });
         }
     }
 });

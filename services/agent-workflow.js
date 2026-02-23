@@ -417,21 +417,28 @@ export function createCallSession(callerPhone = '', options = {}) {
           content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
         });
 
-        // --- Smart History Slicing ---
-        // We slice the last 10 turns, but we must NOT start with a 'tool' role
-        // if its corresponding 'assistant' call is outside the window.
-        let trimmedHistory = [...conversationHistory];
-        if (trimmedHistory.length > 10) {
-          let sliceIdx = trimmedHistory.length - 10;
-          // Search backwards for a safe starting point (cannot start with 'tool')
-          while (sliceIdx < trimmedHistory.length && trimmedHistory[sliceIdx].role === 'tool') {
+        // --- Smart History Slicing (Revised v29) ---
+        // We ensure that we never start history with a 'tool' role.
+        // We also strip library-internal fields to keep it clean for OpenAI.
+        let messages = [...conversationHistory];
+        if (messages.length > 20) {
+          let sliceIdx = messages.length - 20;
+          // Search backwards for a safe starting point (must be 'user' or 'assistant' without pending tool calls)
+          while (sliceIdx < messages.length && (messages[sliceIdx].role === 'tool' || (messages[sliceIdx].role === 'assistant' && messages[sliceIdx].tool_calls))) {
             sliceIdx++;
           }
-          trimmedHistory = trimmedHistory.slice(sliceIdx);
+          messages = messages.slice(sliceIdx);
         }
-        trimmedHistory = trimmedHistory.map(sanitizeMessage);
 
-        const stream = await turnRunner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
+        const sanitizedMessages = messages.map(msg => ({
+          role: msg.role,
+          content: msg.content || null,
+          tool_calls: msg.tool_calls || null,
+          tool_call_id: msg.tool_call_id || null,
+          name: msg.name || null
+        })).map(sanitizeMessage);
+
+        const stream = await turnRunner.run(agent, [systemMessage, ...sanitizedMessages], { stream: true });
 
         let finalOutputText = "";
         let sentLength = 0;
@@ -627,64 +634,34 @@ export function createCallSession(callerPhone = '', options = {}) {
     const runTool = async (toolObj, params) => {
       if (!toolObj) {
         if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
-        throw new Error('Tool object is undefined');
+        return JSON.stringify({ success: false, error: 'Tool object is undefined', timestamp: Date.now() });
       }
 
-      let result;
-      // Robust tool execution. 
-      // PRIORITY: Use .execute() for direct raw execution (returns JS objects)
-      // SECONDARY: Use .invoke() which is the library's wrapper (returns stringified JSON)
       try {
-        // PRIORITY: Use .execute() for direct raw execution (returns JS objects).
-        // This avoids library-level JSON wrapping/unwrapping that can cause "Invalid JSON" errors.
-        if (toolObj.execute && typeof toolObj.execute === 'function') {
-          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .execute()`);
-          result = await toolObj.execute(params);
-        } else if (toolObj.invoke && typeof toolObj.invoke === 'function') {
-          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .invoke()`);
-          result = await toolObj.invoke(params);
-        } else if (typeof toolObj === 'function') {
-          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name || 'anonymous'} as function`);
-          result = await toolObj(params);
-        } else {
-          const runFn = toolObj.run || toolObj.call;
-          if (typeof runFn === 'function') {
-            if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via fallback run/call`);
-            result = await runFn.call(toolObj, params);
-          } else {
-            if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} has no executable method`);
-            throw new Error(`Tool object ${toolObj.name || 'unknown'} is not executable`);
-          }
+        const rawResult = toolObj.execute ?
+          await toolObj.execute(params) :
+          await toolObj.invoke(params);
+
+        // FORCE JSON - no exceptions
+        const safeResult = {
+          success: true,
+          data: rawResult,
+          timestamp: Date.now()
+        };
+
+        if (options.logger) {
+          options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} executed successfully`);
         }
+
+        return JSON.stringify(safeResult);
       } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool execution failed: ${toolObj.name || 'unknown'}. Params: ${JSON.stringify(params)}`, err);
-        throw err;
+        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error:`, err);
+        return JSON.stringify({
+          success: false,
+          error: err.message,
+          timestamp: Date.now()
+        });
       }
-
-      if (options.logger) {
-        const type = typeof result;
-        const preview = type === 'string' ? result.substring(0, 150) : (type === 'object' ? JSON.stringify(result).substring(0, 150) : result);
-        options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} RAW result (${type}): ${preview}`);
-      }
-
-      // Robust parsing: handle both objects and JSON strings
-      // We must check if it's a string, and if so, try to parse it. 
-      // Library often returns stringified JSON even if the tool returned an object.
-      if (typeof result === 'string') {
-        const trimmed = result.trim();
-        // If it starts with { or [, it's likely JSON
-        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} JSON string unwrapped successfully`);
-            return parsed;
-          } catch (e) {
-            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned JSON-like string but failed parse: ${trimmed.substring(0, 50)}...`);
-            return result;
-          }
-        }
-      }
-      return result;
     };
 
     const handleBackgroundTasks = (output) => {
@@ -702,7 +679,9 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            const norm = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+            const rawResponse = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+            const response = JSON.parse(rawResponse);
+            const norm = response.success ? response.data : null;
             // Simple validation: check for @ and .
             if (norm && typeof norm === 'object' && norm.normalized_email && norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
               session.email = norm.normalized_email;
@@ -777,11 +756,16 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             const todayISO = new Date().toISOString().split('T')[0];
-            const res = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
-            if (res?.valid) {
-              session.listing_start = res.normalized;
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: res.normalized } });
+            const rawResponse = await runTool(normalizeListingDateTool, {
+              spoken_date: candidate,
+              current_date_iso: new Date().toISOString().split('T')[0]
+            });
+            const response = JSON.parse(rawResponse);
+            const norm = response.success ? response.data : null;
+            if (norm && norm.valid && norm.normalized) {
+              session.listing_start = norm.normalized;
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
             }
           } catch (e) {
             console.error(e);
