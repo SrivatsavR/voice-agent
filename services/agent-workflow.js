@@ -197,7 +197,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
 2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
    - Ask: "Kya aapke paas GST number hai? Agar nahi hai toh aap Enrollment ID or UIN bhi de sakte hain."
-3. **Finish**: Once Email and (GST OR UIN) are captured, set next_node: NODE_4_CLOSURE and ask the first question of Node 4.
+3. **TRANSITION PROTOCOL**: Once Email and (GST OR UIN) are captured, you MUST move to NODE_4_CLOSURE. 
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -212,7 +212,8 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
 - Do NOT repeat questions if data is in system context.
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
+- **NEVER use terminal nodes** (TERM_*) from this node. Always route to NODE_4_CLOSURE for the final wrap-up.
+- Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with the bridge: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
@@ -232,16 +233,15 @@ Thank the user for their time and details, then proactively ask if they have any
    - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Zaroor, main check karke batati hoon."
    - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
    - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi"):
+3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi", "bas"):
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
-   - **WARNING**: Do NOT use TERM_COMPLETE if the user says "theek hai" or "okay" after an answer; instead, ask the bridge again.
 
-=== RULES ===
-- NEVER ask if the user is interested in Meesho again; that was already confirmed in Node 1.
+=== CRITICAL TERMINATION GUARDS ===
+- **DO NOT** use TERM_COMPLETE if the user says "theek hai", "okay", "ji", or "hmm". These are continuations. Instead, ask: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+- **DO NOT** use TERM_COMPLETE until you have explicitly asked "Kya aap Meesho ke baare mein kuch aur jaanna hai?" and received a clear negative response.
+- NEVER ask if the user is interested in Meesho again.
 - DO NOT repeat the onboarding pitch.
-- Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
-- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.
 - Ensure every 'say' ends with a question, except for the final goodbye.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
