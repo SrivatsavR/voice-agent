@@ -165,7 +165,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?". If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
 3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
-   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
+   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said. NEVER attempt to guess or set 'listing_start' directly; the system will normalize it from 'raw_listing_start'.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
@@ -189,7 +189,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 === QUESTION FLOW ===
 1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
 2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
-   - Ask: "Kya aapke paas 15-digit GST number hai? Agar nahi hai toh aap Enrollment ID bhi de sakte hain."
+   - Ask: "Kya aapke paas GST number hai? Agar nahi hai toh aap Enrollment ID or UIN bhi de sakte hain."
 3. **Finish**: Once Email and (GST OR UIN) are captured, set next_node: NODE_4_CLOSURE and ask the first question of Node 4.
 
 === INTENT DETECTION ===
@@ -205,7 +205,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
 - Do NOT repeat questions if data is in system context.
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally. Your 'say' MUST be: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?".`,
+- Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -218,12 +218,13 @@ const closureAgent = new Agent({
 Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
 
 === FLOW ===
-1. **Initial Closing**: Inform the user about the WhatsApp link FIRST.
+1. **Initial Closing**: If 'closure_bridge_delivered' is not true, inform the user about the WhatsApp link FIRST.
    Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
+   Set 'closure_bridge_delivered': true in 'updates_json'.
+2. **Handle Questions**: If the user asks a question, set 'kb_query' in 'updates_json' to their question.
    - Reply with: "Zaroor, main check karke batati hoon." 
-   - Wait for the system to provide the Knowledge Base info in the next turn.
-3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"), or if you have just answered their questions and they are satisfied:
+   - After providing the answer from the Knowledge Base, ALWAYS end with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"):
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
 
@@ -260,6 +261,8 @@ export const TERMINAL_NODES = new Set([
 
 const createDefaultSession = () => ({
   caller_phone: '',
+  uin: '',
+  closure_bridge_delivered: false,
   // Node 1
   name_spoken: '',
   is_right_person: '',
@@ -286,6 +289,7 @@ const createDefaultSession = () => ({
   raw_gstin: '',
   gst_declined: false,
   uin: '',
+  closure_bridge_delivered: false,
   // Node 4
   kb_query: '',
   call_outcome: 'in_progress',
@@ -953,7 +957,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     setIsActiveCallback,
     checkFastMatch,
     getCurrentNode: () => currentNode,
-    getSession: () => ({ ...session }),
+    getSession: () => ({ ...session, transcript: conversationHistory }),
     isTerminal: () => TERMINAL_NODES.has(currentNode),
   };
 }

@@ -133,6 +133,7 @@ async function startNewSession() {
     isVoiceCall = false;
 
     chatMessages.innerHTML = '';
+    if (extractionFeed) extractionFeed.innerHTML = '<p class="text-[10px] text-slate-300 italic">Listening for intents...</p>';
     callIdDisplay.textContent = `ID: ${currentCallId}`;
     addMessage('agent', data.say);
     updateVariables(currentSession);
@@ -198,12 +199,27 @@ async function refreshHistory() {
             isVoiceCall = (call.caller_phone && call.caller_phone !== 'chat-user');
 
             chatMessages.innerHTML = '';
+            if (extractionFeed) extractionFeed.innerHTML = '<p class="text-[10px] text-slate-300 italic">Listening for intents...</p>';
             callIdDisplay.textContent = `ID: ${currentCallId}`;
             updateVariables(currentSession);
             setupRealtimeEvents(currentCallId);
 
             // Fetch historical logs to backfill chat window
-            backfillLogs(currentCallId);
+            // If the session object already has a transcript (from history-service), use it immediately
+            if (call.transcript && Array.isArray(call.transcript)) {
+                call.transcript.forEach(entry => {
+                    const role = entry.role === 'assistant' ? 'agent' : (entry.role === 'user' ? 'user' : null);
+                    if (role && entry.content) {
+                        let txt = typeof entry.content === 'string' ? entry.content : (Array.isArray(entry.content) ? entry.content.map(c => c.text || '').join('') : '');
+                        if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
+                        if (txt && !txt.startsWith('{"say"')) { // Filter out raw JSON if any
+                            addMessage(role, txt);
+                        }
+                    }
+                });
+            } else {
+                backfillLogs(currentCallId);
+            }
         };
         historyList.appendChild(div);
 
