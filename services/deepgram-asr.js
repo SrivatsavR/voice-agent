@@ -49,12 +49,12 @@ export class DeepgramASR {
             encoding: 'mulaw',
             sample_rate: '8000',
             channels: '1',
-            punctuate: 'true',
+            punctuate: 'false',
             interim_results: 'true',
-            endpointing: '500',
+            endpointing: '300',
             utterance_end_ms: '2000',
             vad_events: 'true',
-            smart_format: 'true',
+            smart_format: 'false',
             language: lang
         });
 

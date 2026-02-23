@@ -667,6 +667,14 @@ wss.on('connection', (ws) => {
             tts.clearAudio();
             silenceFiller?.pause();
           }
+
+          // Evaluate fast match on partial transcripts
+          if (callSession && callSession.checkFastMatch) {
+            if (callSession.checkFastMatch(partial)) {
+              callLog.withComponent('User').info(`[Fast-Match Interim] Matched: ${partial}. Forcing flush.`);
+              asr.forceFlush();
+            }
+          }
         },
         onSpeechStarted: () => {
           // Warmup removed to reduce ElevenLabs overhead

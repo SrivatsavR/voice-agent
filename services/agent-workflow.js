@@ -123,26 +123,6 @@ const DATA_INTERPRETATION_CONTEXT = `
 - Phone numbers: Normalize to 10 digits if mentioned.
 `;
 
-// ─── NODE 0: Welcome ──────────────────────────────────────────────────────────
-const welcomeAgent = new Agent({
-  name: "NODE_0_WELCOME",
-  instructions: `${BASE_VOICE_CONTEXT}
-
-=== YOUR TASK ===
-  Deliver the welcome greeting exactly as scripted. Do NOT ask any questions. Do NOT engage in conversation.
-
-Say verbatim:
-"Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon."
-
-Set next_node to "NODE_1_NAME_INTEREST". Leave updates as empty object { }.
-
-=== IMPORTANT ===
-  - Do NOT modify the welcome line. Speak it exactly.
-  - Do NOT add extra questions or information.`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 256, store: true, response_format: RESPONSE_SCHEMA }
-});
-
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
@@ -264,7 +244,7 @@ Conclude the call. Inform them about the WhatsApp link. Answer any questions usi
 // ─── Routing Map ──────────────────────────────────────────────────────────────
 
 const NODE_AGENTS = {
-  NODE_0_WELCOME: welcomeAgent,
+  // NODE_0_WELCOME: Bypassed directly in getWelcome() to avoid framework overhead
   NODE_1_NAME_INTEREST: nameInterestAgent,
   NODE_2_DETAILS: detailsAgent,
   NODE_3_CONTACT_GST: contactGstAgent,
@@ -553,6 +533,19 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
     ]
   };
+
+  function checkFastMatch(text) {
+    if (!text) return false;
+    const cleanText = text.trim().toLowerCase().replace(/[.,?!|।]/g, '');
+    if (FAST_MATCH_CONFIG[currentNode]) {
+      for (const entry of FAST_MATCH_CONFIG[currentNode]) {
+        if (cleanText.match(entry.pattern)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   async function processTranscript(transcript, tts = null, silenceFiller = null) {
     currentProcessingId++;
@@ -874,6 +867,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     getWelcome,
     processTranscript,
     setIsActiveCallback,
+    checkFastMatch,
     getCurrentNode: () => currentNode,
     getSession: () => ({ ...session }),
     isTerminal: () => TERMINAL_NODES.has(currentNode),

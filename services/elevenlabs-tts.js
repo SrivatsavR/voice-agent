@@ -364,11 +364,12 @@ export class ElevenLabsTTS {
         // 3. Start drip loop if not active
         if (!this._isDripping) {
             this._isDripping = true;
-            this._dripToTwilio();
+            // Immediate synchronous drip for the very first chunk to completely eliminate queue warmup latency
+            this._dripToTwilio(true);
         }
     }
 
-    _dripToTwilio() {
+    _dripToTwilio(isFirstChunk = false) {
         if (this._closed || this._audioQueue.length === 0) {
             this._isDripping = false;
             return;
@@ -389,8 +390,12 @@ export class ElevenLabsTTS {
         }
 
         // Schedule next chunk (80ms of audio dripped every 10ms = 8x speed)
-        // This is extremely steady and avoids overwhelming the socket
-        setTimeout(() => this._dripToTwilio(), 10);
+        // If this was the first synchronous chunk, we start the async loop now.
+        if (this._audioQueue.length > 0) {
+            setTimeout(() => this._dripToTwilio(false), 10);
+        } else {
+            this._isDripping = false;
+        }
     }
 
     close() {
