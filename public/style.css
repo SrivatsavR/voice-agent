@@ -1,9 +1,12 @@
 :root {
-    --bg-dark: #050508;
-    --accent: #6366f1;
-    --accent-glow: rgba(99, 102, 241, 0.4);
-    --glass: rgba(255, 255, 255, 0.03);
-    --border: rgba(255, 255, 255, 0.08);
+    --bg-dark: #f0f2f5;
+    --accent: #ff477e;
+    --accent-glow: rgba(255, 71, 126, 0.4);
+    --glass: rgba(255, 255, 255, 0.8);
+    --border: rgba(0, 0, 0, 0.08);
+    --meesho-pink: #ff477e;
+    --meesho-deep: #771933;
+    --text-main: #1b1b1b;
 }
 
 ::-webkit-scrollbar {
@@ -25,7 +28,7 @@
 
 body {
     background-color: var(--bg-dark);
-    color: #e2e8f0;
+    color: var(--text-main);
 }
 
 ::selection {
@@ -41,7 +44,7 @@ body {
 
 .variable-card.captured {
     background: rgba(16, 185, 129, 0.05);
-    border-color: rgba(16, 185, 129, 0.3);
+    border-color: #10b981;
     box-shadow: 0 4px 12px rgba(16, 185, 129, 0.05);
 }
 
@@ -138,6 +141,7 @@ body {
         opacity: 0;
         transform: scale(0.8) translateX(-10px);
     }
+
     to {
         opacity: 1;
         transform: scale(1) translateX(0);
@@ -158,6 +162,13 @@ body {
 }
 
 @keyframes blink {
-    0%, 100% { opacity: 0.2; }
-    50% { opacity: 1; }
+
+    0%,
+    100% {
+        opacity: 0.2;
+    }
+
+    50% {
+        opacity: 1;
+    }
 }

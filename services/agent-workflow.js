@@ -126,19 +126,15 @@ const DATA_INTERPRETATION_CONTEXT = `
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
-  instructions: `${BASE_VOICE_CONTEXT}
-${GLOBAL_GUARDRAILS}
-
-=== YOUR TASK ===
+  instructions: `=== YOUR TASK ===
 Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
 
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing AND 'pitch_delivered' is not true: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur zero logistics charges ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?". Set 'pitch_delivered' to true in 'updates_json'.
-  2. If 'interest_in_meesho' is missing AND 'pitch_delivered' is true: Ask "Toh kya aap Meesho par apne products sell karna chahte hain?".
-  3. If interested but Name is missing: Ask "Aapka naam kya hai?".
-  4. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
+  2. If interested but Name is missing: Ask "Aapka naam kya hai?".
+  3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -161,11 +157,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
 const detailsAgent = new Agent({
   name: "NODE_2_DETAILS",
-  instructions: `${BASE_VOICE_CONTEXT}
-${GLOBAL_GUARDRAILS}
-${DATA_INTERPRETATION_CONTEXT}
-
-=== YOUR TASK ===
+  instructions: `=== YOUR TASK ===
 Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentioned items or price range, do NOT ask for them. Capture any remaining info.
 
 === QUESTION FLOW ===
@@ -190,11 +182,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
-  instructions: `${BASE_VOICE_CONTEXT}
-${GLOBAL_GUARDRAILS}
-${DATA_INTERPRETATION_CONTEXT}
-
-=== YOUR TASK ===
+  instructions: `=== YOUR TASK ===
 Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
 
 === QUESTION FLOW ===
@@ -224,10 +212,7 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
-  instructions: `${BASE_VOICE_CONTEXT}
-${GLOBAL_GUARDRAILS}
-
-=== YOUR TASK ===
+  instructions: `=== YOUR TASK ===
 Conclude the call. Inform them about the WhatsApp link. Answer any questions using the tool.
 
 === FLOW ===
@@ -378,6 +363,15 @@ export function createCallSession(callerPhone = '', options = {}) {
 
   async function runNode(agent, userMessage, onSayChunk) {
     return await withTrace("Reseller Qualification", async () => {
+      // Create a static System Message to reduce input tokens in instructions
+      const systemMessage = {
+        role: 'system',
+        content: [{
+          type: 'text',
+          text: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
+        }]
+      };
+
       if (userMessage) {
         conversationHistory.push({
           role: 'user',
@@ -385,7 +379,10 @@ export function createCallSession(callerPhone = '', options = {}) {
         });
       }
 
-      const stream = await runner.run(agent, [...conversationHistory], { stream: true });
+      // Limit conversation history to last 10 turns to keep prompt size small
+      const trimmedHistory = conversationHistory.slice(-10);
+
+      const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
 
       let finalOutputText = "";
       let sentLength = 0;

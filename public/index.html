@@ -11,69 +11,71 @@
     <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 
-<body class="bg-[#050508] text-white font-['Outfit'] h-screen overflow-hidden">
+<body class="bg-slate-50 text-slate-900 font-['Outfit'] h-screen overflow-hidden">
     <!-- Visual Background Enhancements -->
     <div class="fixed inset-0 z-[-1]">
-        <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-600/10 blur-[120px] rounded-full"></div>
-        <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-600/10 blur-[120px] rounded-full">
+        <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#ff477e]/10 blur-[120px] rounded-full"></div>
+        <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#771933]/5 blur-[120px] rounded-full">
         </div>
     </div>
 
     <div class="flex h-full w-full">
         <!-- LEFT COLUMN: Agent Overview (25%) -->
-        <aside class="w-1/4 max-w-[340px] border-r border-white/5 flex flex-col bg-black/20 backdrop-blur-xl shrink-0">
-            <div class="p-5 border-b border-white/5">
+        <aside
+            class="w-1/4 max-w-[340px] border-r border-slate-200 flex flex-col bg-white/80 backdrop-blur-xl shrink-0">
+            <div class="p-5 border-b border-slate-200">
                 <div class="flex items-center gap-3 mb-5">
                     <div
-                        class="bg-gradient-to-br from-indigo-500 to-purple-600 p-2.5 rounded-2xl shadow-lg shadow-indigo-500/20">
-                        <i data-lucide="mic" class="w-6 h-6"></i>
+                        class="bg-gradient-to-br from-[#ff477e] to-[#771933] p-2.5 rounded-2xl shadow-lg shadow-pink-500/20">
+                        <i data-lucide="mic" class="w-6 h-6 text-white"></i>
                     </div>
-                    <h1 class="text-xl font-bold tracking-tight">Meesho <span class="text-indigo-400">Voice AI</span>
+                    <h1 class="text-xl font-bold tracking-tight text-slate-800">Meesho <span
+                            class="text-[#ff477e]">Voice AI</span>
                     </h1>
                 </div>
 
                 <div class="relative group mb-5">
                     <div
-                        class="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-3xl blur opacity-20 group-hover:opacity-40 transition duration-1000">
+                        class="absolute -inset-1 bg-gradient-to-r from-[#ff477e] to-[#771933] rounded-3xl blur opacity-10 group-hover:opacity-20 transition duration-1000">
                     </div>
-                    <div class="relative bg-white/5 border border-white/10 p-5 rounded-2xl">
-                        <h2 class="text-lg font-bold mb-1">Asmita</h2>
-                        <p class="text-[10px] text-indigo-400 font-semibold uppercase tracking-wider mb-3">Onboarding
+                    <div class="relative bg-white border border-slate-200 p-5 rounded-2xl shadow-sm">
+                        <h2 class="text-lg font-bold mb-1 text-slate-800">Asmita</h2>
+                        <p class="text-[10px] text-[#ff477e] font-semibold uppercase tracking-wider mb-3">Onboarding
                             Specialist</p>
-                        <p class="text-[13px] text-white/60 leading-relaxed">
+                        <p class="text-[13px] text-slate-600 leading-relaxed">
                             A voice agent designed to onboard new resellers. Conversational and empathetic.
                         </p>
                     </div>
                 </div>
 
                 <div class="space-y-3">
-                    <h3 class="text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold px-1">Workflow Nodes</h3>
+                    <h3 class="text-[9px] uppercase tracking-[0.2em] text-slate-400 font-bold px-1">Workflow Nodes</h3>
                     <div class="space-y-3">
                         <div
-                            class="flex items-center gap-3 text-xs text-white/70 bg-white/5 p-2 rounded-xl border border-white/5">
+                            class="flex items-center gap-3 text-xs text-slate-600 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
                             <div
-                                class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px] font-bold text-indigo-400">
+                                class="w-5 h-5 rounded-full bg-pink-100 flex items-center justify-center text-[10px] font-bold text-[#ff477e]">
                                 1</div>
                             <span>Welcome & Identity</span>
                         </div>
                         <div
-                            class="flex items-center gap-3 text-xs text-white/70 bg-white/5 p-2 rounded-xl border border-white/5">
+                            class="flex items-center gap-3 text-xs text-slate-600 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
                             <div
-                                class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px] font-bold text-indigo-400">
+                                class="w-5 h-5 rounded-full bg-pink-100 flex items-center justify-center text-[10px] font-bold text-[#ff477e]">
                                 2</div>
                             <span>Interest & Business Detail</span>
                         </div>
                         <div
-                            class="flex items-center gap-3 text-xs text-white/70 bg-white/5 p-2 rounded-xl border border-white/5">
+                            class="flex items-center gap-3 text-xs text-slate-600 bg-white p-2 rounded-xl border border-slate-200 shadow-sm">
                             <div
-                                class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px] font-bold text-indigo-400">
+                                class="w-5 h-5 rounded-full bg-pink-100 flex items-center justify-center text-[10px] font-bold text-[#ff477e]">
                                 3</div>
                             <span>Identity (GST/Email)</span>
                         </div>
                         <div
-                            class="flex items-center gap-3 text-xs text-white/70 bg-white/5 p-2.5 rounded-xl border border-white/5">
+                            class="flex items-center gap-3 text-xs text-slate-600 bg-white p-2.5 rounded-xl border border-slate-200 shadow-sm">
                             <div
-                                class="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-[10px] font-bold text-indigo-400">
+                                class="w-5 h-5 rounded-full bg-pink-100 flex items-center justify-center text-[10px] font-bold text-[#ff477e]">
                                 4</div>
                             <span>Closure & QnA</span>
                         </div>
@@ -82,19 +84,19 @@
             </div>
 
             <div class="p-5 flex-1 overflow-y-auto space-y-3">
-                <h3 class="text-[9px] uppercase tracking-[0.2em] text-white/30 font-bold px-1">Capabilities</h3>
+                <h3 class="text-[9px] uppercase tracking-[0.2em] text-slate-400 font-bold px-1">Capabilities</h3>
                 <ul class="space-y-2">
-                    <li class="flex items-start gap-2 text-[11px] text-white/50"><i data-lucide="zap"
-                            class="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5"></i> <span>Real-time Hinglish
+                    <li class="flex items-start gap-2 text-[11px] text-slate-500"><i data-lucide="zap"
+                            class="w-3.5 h-3.5 text-[#ff477e] shrink-0 mt-0.5"></i> <span>Real-time Hinglish
                             Support</span></li>
-                    <li class="flex items-start gap-2 text-[11px] text-white/50"><i data-lucide="message-square"
-                            class="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5"></i> <span>Intelligent Barge-in
+                    <li class="flex items-start gap-2 text-[11px] text-slate-500"><i data-lucide="message-square"
+                            class="w-3.5 h-3.5 text-[#ff477e] shrink-0 mt-0.5"></i> <span>Intelligent Barge-in
                             Support</span></li>
-                    <li class="flex items-start gap-2 text-[11px] text-white/50"><i data-lucide="cpu"
-                            class="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5"></i> <span>Dynamic Backchanneling</span>
+                    <li class="flex items-start gap-2 text-[11px] text-slate-500"><i data-lucide="cpu"
+                            class="w-3.5 h-3.5 text-[#ff477e] shrink-0 mt-0.5"></i> <span>Dynamic Backchanneling</span>
                     </li>
-                    <li class="flex items-start gap-2 text-[11px] text-white/50"><i data-lucide="book-open"
-                            class="w-3.5 h-3.5 text-indigo-500 shrink-0 mt-0.5"></i> <span>Seller T & C Knowledge
+                    <li class="flex items-start gap-2 text-[11px] text-slate-500"><i data-lucide="book-open"
+                            class="w-3.5 h-3.5 text-[#ff477e] shrink-0 mt-0.5"></i> <span>Seller T & C Knowledge
                             Base</span></li>
                 </ul>
             </div>
@@ -104,20 +106,20 @@
         <div class="flex-1 flex flex-col min-w-0">
             <!-- TOP STRIP: Call Me -->
             <header
-                class="p-4 border-b border-white/5 bg-indigo-600/5 backdrop-blur-md flex items-center justify-between">
+                class="p-4 border-b border-slate-200 bg-white/80 backdrop-blur-md flex items-center justify-between">
                 <div class="flex items-center gap-3">
                     <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <span class="text-sm font-medium text-white/80">Test this agent by having it call you</span>
+                    <span class="text-sm font-medium text-slate-600">Test this agent by having it call you</span>
                 </div>
                 <div class="flex gap-2">
                     <input type="tel" id="outbound-phone" placeholder="+91..."
-                        class="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-indigo-500/50 w-48 transition-all hover:bg-white/10">
+                        class="bg-white border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:border-[#ff477e]/50 w-48 transition-all hover:border-slate-300">
                     <button id="trigger-call"
-                        class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl border border-indigo-400/30 shadow-lg shadow-indigo-600/20 transition-all text-sm font-bold flex items-center gap-2">
+                        class="px-5 py-2 bg-[#ff477e] hover:bg-[#ff1f61] rounded-xl border border-pink-400/30 shadow-lg shadow-pink-500/20 transition-all text-sm font-bold flex items-center gap-2 text-white">
                         <i data-lucide="phone" class="w-4 h-4"></i> Make a Call
                     </button>
                     <button id="reset-session"
-                        class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all text-sm flex items-center gap-2">
+                        class="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl transition-all text-sm flex items-center gap-2 text-slate-600">
                         <i data-lucide="refresh-cw" class="w-4 h-4"></i>
                     </button>
                 </div>
@@ -125,62 +127,54 @@
 
             <div class="flex-1 flex min-h-0">
                 <!-- MIDDLE: Last 5 Calls (25% of remaining) -->
-                <section class="w-1/4 border-r border-white/5 flex flex-col bg-black/10 shrink-0">
-                    <div class="p-6 border-b border-white/5">
-                        <h3 class="text-xs font-bold uppercase tracking-widest text-white/40">Recent History</h3>
+                <section class="w-1/4 border-r border-slate-200 flex flex-col bg-slate-50/50 shrink-0">
+                    <div class="p-6 border-b border-slate-200">
+                        <h3 class="text-xs font-bold uppercase tracking-widest text-slate-400">Recent History</h3>
                     </div>
                     <div class="flex-1 overflow-y-auto p-4 space-y-3" id="history-list">
                         <!-- History items injected here -->
-                        <div class="animate-pulse space-y-3">
-                            <div class="h-20 bg-white/5 rounded-2xl"></div>
-                            <div class="h-20 bg-white/5 rounded-2xl"></div>
-                            <div class="h-20 bg-white/5 rounded-2xl"></div>
-                        </div>
                     </div>
                 </section>
 
                 <!-- RIGHT: Interactive Console (Consolidated Variables + Chat) -->
-                <main class="flex-1 flex flex-col min-w-0 bg-[#08080c]">
+                <main class="flex-1 flex flex-col min-w-0 bg-white">
                     <!-- Consolidated Variables: Grid layout, no scroll -->
-                    <div class="p-4 border-b border-white/5 bg-white/[0.02]">
+                    <div class="p-4 border-b border-slate-200 bg-slate-50/30">
                         <div class="flex items-center justify-between mb-3 px-2">
-                            <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">Extracted Session
+                            <h3 class="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Extracted
+                                Session
                                 Data</h3>
-                            <div id="call-id-display" class="text-[10px] font-mono text-white/20">Waiting...</div>
+                            <div id="call-id-display" class="text-[10px] font-mono text-slate-300">Waiting...</div>
                         </div>
                         <div id="session-variables" class="grid grid-cols-4 gap-2 mb-4">
-                            <!-- Variables will be injected here as compact cards -->
-                            <div class="col-span-1 h-12 bg-white/5 rounded-lg animate-pulse"></div>
-                            <div class="col-span-1 h-12 bg-white/5 rounded-lg animate-pulse"></div>
-                            <div class="col-span-1 h-12 bg-white/5 rounded-lg animate-pulse"></div>
-                            <div class="col-span-1 h-12 bg-white/5 rounded-lg animate-pulse"></div>
+                            <!-- Variables will be injected here -->
                         </div>
 
                         <!-- Extraction Logic / Thought Feed -->
-                        <div class="bg-black/40 border border-white/5 rounded-xl p-3">
+                        <div class="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
                             <div class="flex items-center gap-2 mb-2">
-                                <i data-lucide="zap" class="w-3 h-3 text-indigo-400"></i>
-                                <h4 class="text-[9px] font-bold uppercase tracking-wider text-white/40">Extraction
+                                <i data-lucide="zap" class="w-3 h-3 text-[#ff477e]"></i>
+                                <h4 class="text-[9px] font-bold uppercase tracking-wider text-slate-400">Extraction
                                     Timeline</h4>
                             </div>
                             <div id="extraction-feed" class="flex flex-wrap gap-2 min-h-[24px]">
-                                <p class="text-[10px] text-white/20 italic">Listening for intents...</p>
+                                <p class="text-[10px] text-slate-300 italic">Listening for intents...</p>
                             </div>
                         </div>
                     </div>
 
                     <!-- Chat Window -->
-                    <div class="flex-1 overflow-y-auto p-8 space-y-6 scroll-smooth" id="chat-messages">
+                    <div class="flex-1 overflow-y-auto p-8 space-y-6 scroll-smooth bg-slate-50/20" id="chat-messages">
                         <!-- Messages -->
                     </div>
 
                     <!-- Input Area -->
-                    <div class="p-6 border-t border-white/5 bg-black/40">
+                    <div class="p-6 border-t border-slate-200 bg-white">
                         <form id="chat-form" class="flex gap-3 max-w-3xl mx-auto relative group">
                             <input type="text" id="user-input" placeholder="Test the agent flow by typing here..."
-                                class="flex-1 bg-white/5 border border-white/10 hover:border-white/20 focus:border-indigo-500/50 focus:outline-none rounded-2xl px-6 py-4 transition-all text-sm placeholder-white/20 shadow-inner">
+                                class="flex-1 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#ff477e]/50 focus:outline-none rounded-2xl px-6 py-4 transition-all text-sm placeholder-slate-300 shadow-inner">
                             <button type="submit"
-                                class="bg-indigo-600 px-6 rounded-2xl hover:bg-indigo-500 transition-all flex items-center justify-center">
+                                class="bg-[#ff477e] px-6 rounded-2xl hover:bg-[#ff1f61] transition-all flex items-center justify-center text-white">
                                 <i data-lucide="send" class="w-5 h-5"></i>
                             </button>
                         </form>
