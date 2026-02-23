@@ -3,7 +3,6 @@ import { Logger } from '../utils/logger.js';
 import {
   validateEmailTool,
   normalizeSpokenEmailTool,
-  validatePhoneTool,
   validatePriceRangeTool,
   normalizeListingDateTool
 } from '../utils/validators.js';
@@ -159,7 +158,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -184,7 +183,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
@@ -197,6 +196,12 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
 2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
    - Ask: "Kya aapke paas GST number hai? Agar nahi hai toh aap Enrollment ID or UIN bhi de sakte hain."
+
+=== GST TRUST RULE ===
+- NEVER reject or validate the GST number format yourself. 
+- If the user provides any alphanumeric string for GST, capture it as 'raw_gstin' in your 'updates_json' immediately.
+- Do NOT ask the user to repeat the GST or tell them it looks "invalid". Trust whatever they say.
+
 3. **TRANSITION PROTOCOL**: Once Email and (GST OR UIN) are captured, you MUST move to NODE_4_CLOSURE. 
 
 === INTENT DETECTION ===
@@ -216,7 +221,7 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with the bridge: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -230,7 +235,7 @@ Thank the user for their time and details, then proactively ask if they have any
    Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
    Set 'closure_bridge_delivered': true in 'updates_json'.
 2. **Handle Questions**:
-   - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Zaroor, main check karke batati hoon."
+   - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Main check karke batati hoon."
    - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
    - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
 3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi", "bas"):
@@ -245,7 +250,7 @@ Thank the user for their time and details, then proactively ask if they have any
 - Ensure every 'say' ends with a question, except for the final goodbye.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePhoneTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
@@ -396,7 +401,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       validateEmailTool: !!validateEmailTool,
       validateEmailTool_props: validateEmailTool ? Object.keys(validateEmailTool) : [],
       normalizeSpokenEmailTool: !!normalizeSpokenEmailTool,
-      validatePhoneTool: !!validatePhoneTool,
       validatePriceRangeTool: !!validatePriceRangeTool,
       normalizeListingDateTool: !!normalizeListingDateTool,
       searchKnowledgeBaseTool: !!searchKnowledgeBaseTool
@@ -608,6 +612,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       // PRIORITY: Use .execute() for direct raw execution (returns JS objects)
       // SECONDARY: Use .invoke() which is the library's wrapper (returns stringified JSON)
       try {
+        // PRIORITY: Use .execute() for direct raw execution (returns JS objects).
+        // This avoids library-level JSON wrapping/unwrapping that can cause "Invalid JSON" errors.
         if (toolObj.execute && typeof toolObj.execute === 'function') {
           if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .execute()`);
           result = await toolObj.execute(params);
@@ -628,7 +634,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           }
         }
       } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool execution failed: ${toolObj.name || 'unknown'}`, err);
+        if (options.logger) options.logger.error(`[Workflow] Tool execution failed: ${toolObj.name || 'unknown'}. Params: ${JSON.stringify(params)}`, err);
         throw err;
       }
 
@@ -663,7 +669,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       const updates = output.updates;
       const currentProcId = currentProcessingId;
 
-      if (options.logger) options.logger.withComponent('Workflow').debug('[Background] Checking for tasks', { updates });
+      // Silent background scan for tasks (removed debug log per user request)
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
@@ -716,13 +722,13 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            // Removal of GST Validation as per user request
+            // Removal of GST Validation as per user request (GST TRUST RULE)
             const normalized = candidate.replace(/\s+/g, '').toUpperCase();
             session.gstin = normalized;
             session.gstin_valid = true;
             if (isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Collected (Validation Skipped)');
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true } });
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Captured (Trust Mode)');
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
             }
           } catch (e) {
             console.error(e);
@@ -847,7 +853,6 @@ export function createCallSession(callerPhone = '', options = {}) {
         if (match) {
           // Rule: Never end conversation based on regex
           if (entry.next_node && entry.next_node.startsWith('TERM_')) continue;
-
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
           if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
 

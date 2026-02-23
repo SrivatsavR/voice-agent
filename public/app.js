@@ -240,8 +240,8 @@ async function refreshHistory() {
         };
         historyList.appendChild(div);
 
-        // Auto-select if nothing selected OR if there is an active call we aren't currently viewing
-        if (!currentCallId || (call.call_outcome === 'in_progress' && !isVoiceCall)) {
+        // Auto-select ONLY if nothing is selected.
+        if (!currentCallId) {
             div.onclick();
         }
     });

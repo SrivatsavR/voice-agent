@@ -88,7 +88,7 @@ export const normalizeSpokenEmailTool = tool({
     name: 'normalize_spoken_email',
     description: 'Converts a speech-transcribed email into proper email format. Handles "at" → @, "dot" → ., spelled-out letters, etc. Use this tool BEFORE validate_email when the caller dictates their email address.',
     parameters: z.object({
-        spoken_email: z.string().describe('The raw ASR transcript of the caller speaking their email address')
+        spoken_email: z.string().describe('The raw ASR transcript of the caller speaking their email address (e.g., "name at gmail dot com")')
     }),
     execute: async ({ spoken_email }) => {
         let email = spoken_email.trim().toLowerCase();
@@ -121,40 +121,7 @@ export const normalizeSpokenEmailTool = tool({
 
 // validateGSTINTool removed as per user request
 
-// ─── Indian Phone Number Validation Tool ──────────────────────────────────────
-
-export const validatePhoneTool = tool({
-    name: 'validate_phone',
-    description: 'Validates an Indian mobile phone number. Strips country code (+91) if present. Indian mobile numbers are 10 digits starting with 6, 7, 8, or 9.',
-    parameters: z.object({
-        phone: z.string().describe('The phone number to validate')
-    }),
-    execute: async ({ phone }) => {
-        // Strip everything except digits
-        let digits = phone.replace(/[^0-9]/g, '');
-
-        // Remove leading country code
-        if (digits.startsWith('91') && digits.length === 12) {
-            digits = digits.substring(2);
-        } else if (digits.startsWith('0') && digits.length === 11) {
-            digits = digits.substring(1);
-        }
-
-        const result = { normalized: digits };
-
-        if (digits.length !== 10) {
-            result.valid = false;
-            result.error = `Expected 10-digit mobile number, got ${digits.length} digits.`;
-        } else if (!/^[6-9]/.test(digits)) {
-            result.valid = false;
-            result.error = 'Indian mobile numbers must start with 6, 7, 8, or 9.';
-        } else {
-            result.valid = true;
-            result.formatted = `+91 ${digits.substring(0, 5)} ${digits.substring(5)}`;
-        }
-        return result;
-    }
-});
+// validatePhoneTool removed as per user request
 
 // ─── Price Range Validation Tool ──────────────────────────────────────────────
 
@@ -220,12 +187,12 @@ export const normalizeListingDateTool = tool({
             // Keep current date
         } else if (input.includes('tomorrow') || input.includes('kal')) {
             target.setDate(now.getDate() + 1);
+        } else if (input.includes('parso')) {
+            target.setDate(now.getDate() + 2);
         } else if (input.includes('after') || input.includes('ke baad')) {
             const match = input.match(/(\d+)/);
             if (match) {
                 target.setDate(now.getDate() + parseInt(match[1]));
-            } else if (input.includes('parso')) {
-                target.setDate(now.getDate() + 2);
             }
         } else if (input.includes('week') || input.includes('hapte')) {
             target.setDate(now.getDate() + 7);
