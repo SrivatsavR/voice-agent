@@ -29,8 +29,8 @@ export const searchKnowledgeBaseTool = tool({
     name: 'search_knowledge_base',
     description: "Searches the Meesho onboarding knowledge base (Vector DB) for answers to the caller's questions.",
     parameters: z.object({
-        query: z.string().describe('The specific question asked by the user.').optional(),
-        question: z.string().describe('Alias for query.').optional()
+        query: z.string().describe('The specific question asked by the user.').nullable(),
+        question: z.string().describe('Alias for query.').nullable()
     }),
     execute: async (params) => {
         const query = params.query || params.question;

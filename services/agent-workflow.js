@@ -401,88 +401,98 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
     const myProcessingId = currentProcessingId; // Capture current ID to detect aborts
 
-    return await withTrace("Reseller Qualification", async () => {
-      // Isolate Runner per turn to prevent cross-talk and race conditions
-      const turnRunner = new Runner({
-        traceMetadata: {
-          __trace_source__: "voice-ai-platform",
-          workflow_id: "wf_meesho_reseller_v3"
-        }
-      });
-
-      // System message is now handled externally/consistently
-      const systemMessage = sanitizeMessage({
-        role: 'system',
-        content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
-      });
-
-      // --- Smart History Slicing ---
-      // We slice the last 10 turns, but we must NOT start with a 'tool' role
-      // if its corresponding 'assistant' call is outside the window.
-      let trimmedHistory = [...conversationHistory];
-      if (trimmedHistory.length > 10) {
-        let sliceIdx = trimmedHistory.length - 10;
-        // Search backwards for a safe starting point (cannot start with 'tool')
-        while (sliceIdx < trimmedHistory.length && trimmedHistory[sliceIdx].role === 'tool') {
-          sliceIdx++;
-        }
-        trimmedHistory = trimmedHistory.slice(sliceIdx);
-      }
-      trimmedHistory = trimmedHistory.map(sanitizeMessage);
-
-      const stream = await turnRunner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
-
-      let finalOutputText = "";
-      let sentLength = 0;
-
-      for await (const event of stream) {
-        // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
-        if (myProcessingId !== currentProcessingId) {
-          if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
-          break;
-        }
-
-        // Handle raw string events (non-tool calls)
-        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
-          finalOutputText += event.data.text;
-        }
-        // Handle @openai/agents v0.0.5 structured json streaming object deltas
-        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
-          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
-          if (contentObj && contentObj.text) {
-            finalOutputText = contentObj.text; // the framework accumulates the full string here
+    try {
+      return await withTrace("Reseller Qualification", async () => {
+        // Isolate Runner per turn to prevent cross-talk and race conditions
+        const turnRunner = new Runner({
+          traceMetadata: {
+            __trace_source__: "voice-ai-platform",
+            workflow_id: "wf_meesho_reseller_v3"
           }
-        }
-        else if (event.type === 'model_text_delta') {
-          finalOutputText += event.data.textDelta || event.data.delta || '';
-        }
+        });
 
-        // Try to parse 'say' from whatever we've accumulated so far
-        if (onSayChunk && finalOutputText) {
-          // Look for "say": "..." pattern. Handle opening quote through current end.
-          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
-          if (sayMatch) {
-            const currentSay = sayMatch[1];
-            // Unescape common JSON characters
-            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+        // System message is now handled externally/consistently
+        const systemMessage = sanitizeMessage({
+          role: 'system',
+          content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
+        });
 
-            if (unescaped.length > sentLength) {
-              const chunk = unescaped.substring(sentLength);
-              sentLength = unescaped.length;
-              onSayChunk(chunk);
+        // --- Smart History Slicing ---
+        // We slice the last 10 turns, but we must NOT start with a 'tool' role
+        // if its corresponding 'assistant' call is outside the window.
+        let trimmedHistory = [...conversationHistory];
+        if (trimmedHistory.length > 10) {
+          let sliceIdx = trimmedHistory.length - 10;
+          // Search backwards for a safe starting point (cannot start with 'tool')
+          while (sliceIdx < trimmedHistory.length && trimmedHistory[sliceIdx].role === 'tool') {
+            sliceIdx++;
+          }
+          trimmedHistory = trimmedHistory.slice(sliceIdx);
+        }
+        trimmedHistory = trimmedHistory.map(sanitizeMessage);
+
+        const stream = await turnRunner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
+
+        let finalOutputText = "";
+        let sentLength = 0;
+
+        for await (const event of stream) {
+          // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
+          if (myProcessingId !== currentProcessingId) {
+            if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
+            break;
+          }
+
+          // Handle raw string events (non-tool calls)
+          if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
+            finalOutputText += event.data.text;
+          }
+          // Handle @openai/agents v0.0.5 structured json streaming object deltas
+          else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+            const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+            if (contentObj && contentObj.text) {
+              finalOutputText = contentObj.text; // the framework accumulates the full string here
+            }
+          }
+          else if (event.type === 'model_text_delta') {
+            finalOutputText += event.data.textDelta || event.data.delta || '';
+          }
+
+          // Try to parse 'say' from whatever we've accumulated so far
+          if (onSayChunk && finalOutputText) {
+            // Look for "say": "..." pattern. Handle opening quote through current end.
+            const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+            if (sayMatch) {
+              const currentSay = sayMatch[1];
+              // Unescape common JSON characters
+              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+              if (unescaped.length > sentLength) {
+                const chunk = unescaped.substring(sentLength);
+                sentLength = unescaped.length;
+                onSayChunk(chunk);
+              }
             }
           }
         }
-      }
 
-      await stream.completed;
-      if (!nodeOptions.skipHistory) {
-        // Sanitize new items before storing
-        const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
-        conversationHistory.push(...newItems);
-      }
-      return stream.finalOutput;
-    });
+        await stream.completed;
+        if (!nodeOptions.skipHistory) {
+          // Sanitize new items before storing
+          const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+          conversationHistory.push(...newItems);
+        }
+        return stream.finalOutput;
+      });
+    } catch (err) {
+      if (options.logger) options.logger.error('[Workflow] runNode critical failure', err);
+      // Fallback graceful response
+      return {
+        say: "I'm sorry, I'm having a bit of trouble with my system. Can you please tell me that again?",
+        next_node: 'CONTINUE',
+        updates: {}
+      };
+    }
   }
 
   // ── Mark node as done when leaving it ──────────────────────────────────
@@ -515,6 +525,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       {
         pattern: /^(mera naam|my name is|main|i am|this is|मेरा नाम|मैं) (.*?)(?: hai| hoon|है|हूं)?$/i,
         handle: (match, session) => {
+          if (!session) return null;
           const name = match[2].trim();
           if (!session.interest_in_meesho) {
             if (session.pitch_delivered) {
@@ -540,6 +551,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
+          if (!session) return null;
           if (!session.interest_in_meesho) {
             // Let the LLM handle "haanji" etc. at node start to ensure pitch is delivered
             return null;
@@ -572,6 +584,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
+          if (!session) return null;
           if (!session.email_valid && session.email_attempts === 0) {
             return {
               updates: {},
