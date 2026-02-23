@@ -171,12 +171,12 @@ async function refreshHistory() {
 
         div.innerHTML = `
             <div class="flex justify-between items-center">
-                <span class="text-[10px] font-bold text-white/30 truncate">${call.callId}</span>
-                <span class="text-[10px] text-white/40">${timestamp}</span>
+                <span class="text-[10px] font-bold text-slate-400 truncate">${call.callId}</span>
+                <span class="text-[10px] text-slate-400">${timestamp}</span>
             </div>
-            <div class="font-semibold text-sm text-white/90 truncate">${call.preferred_name || call.name_spoken || 'Anonymous'}</div>
+            <div class="font-semibold text-sm text-slate-800 truncate">${call.preferred_name || call.name_spoken || 'Anonymous'}</div>
             <div class="flex justify-between items-center">
-                <span class="text-[10px] text-white/20 truncate">${call.caller_phone || 'Web Test'}</span>
+                <span class="text-[10px] text-slate-400 truncate">${call.caller_phone || 'Web Test'}</span>
                 <span class="text-[9px] uppercase font-bold tracking-tighter ${color}">${outcome.replace('TERM_', '')}</span>
             </div>
         `;
@@ -228,16 +228,16 @@ function addMessage(role, text) {
     div.className = `flex flex-col gap-1.5 ${role === 'user' ? 'items-end' : 'items-start'}`;
 
     const bubbleClasses = {
-        'user': 'bg-white/10 border-white/10 text-white rounded-2xl rounded-tr-none ml-auto',
-        'agent': 'bg-indigo-600/10 border-indigo-500/20 text-indigo-100 rounded-2xl rounded-tl-none',
-        'system': 'bg-red-500/10 border-red-500/20 text-red-100 italic rounded-lg text-[11px]'
+        'user': 'bg-slate-200 border-slate-300 text-slate-800 rounded-2xl rounded-tr-none ml-auto',
+        'agent': 'bg-pink-50 border-pink-100 text-slate-800 rounded-2xl rounded-tl-none',
+        'system': 'bg-red-50 border-red-100 text-red-600 italic rounded-lg text-[11px]'
     };
 
     div.innerHTML = `
         <div class="px-5 py-3 border backdrop-blur-sm max-w-[85%] ${bubbleClasses[role]} shadow-sm">
             <p class="text-sm leading-relaxed">${text}</p>
         </div>
-        <span class="text-[9px] uppercase tracking-widest text-white/20 font-bold px-1">${role}</span>
+        <span class="text-[9px] uppercase tracking-widest text-slate-400 font-bold px-1">${role}</span>
     `;
 
     chatMessages.appendChild(div);
@@ -278,13 +278,13 @@ function updateVariables(session) {
         }
 
         div.innerHTML = `
-            <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-400' : (isSyncing ? 'bg-indigo-500/20 text-indigo-400' : 'bg-white/5 text-white/20')} shrink-0 relative">
+            <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-600' : (isSyncing ? 'bg-pink-500/20 text-pink-500' : 'bg-slate-200 text-slate-400')} shrink-0 relative">
                 <i data-lucide="${target.icon}" class="w-3 h-3"></i>
                 ${isSyncing ? '<div class="absolute -top-1 -right-1 syncing-dot"></div>' : ''}
             </div>
             <div class="min-w-0">
-                <div class="text-[8px] uppercase font-bold text-white/30 truncate">${target.label}</div>
-                <div class="text-[10px] font-bold ${isCaptured ? 'text-white/90' : (isSyncing ? 'text-indigo-400 animate-pulse' : 'text-white/10')} truncate">${displayVal}</div>
+                <div class="text-[8px] uppercase font-bold text-slate-400 truncate">${target.label}</div>
+                <div class="text-[10px] font-bold ${isCaptured ? 'text-slate-800' : (isSyncing ? 'text-pink-500 animate-pulse' : 'text-slate-300')} truncate">${displayVal}</div>
             </div>
         `;
         sessionVariables.appendChild(div);
