@@ -46,6 +46,9 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
   - "Aapka poora naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
+=== TOOL CALLING RULE ===
+If you need to use a tool (like searchKnowledgeBaseTool), you MUST do so by returning a structured tool call. OpenAI requires that the assistant turn requesting the tool is followed by the tool result. DO NOT output plain text when a tool is required.
+
 === DATA TYPES FOR UPDATES_JSON ===
 - 'email_valid', 'gstin_valid', 'pitch_delivered', 'summary_confirmed': **BOOLEAN** (true/false), NOT strings.
 - 'price_min', 'price_max': **NUMBER** or null.
@@ -318,9 +321,14 @@ const createDefaultSession = () => ({
 // ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
 
 function sanitizeMessage(msg) {
-  // Pass-through for valid OpenAI/Library objects.
   if (!msg || typeof msg !== 'object') return msg;
-  return msg;
+  try {
+    // Force POJO conversion to strip library-internal symbols/fields
+    // This ensures compatibility with the plain OpenAI API expectations.
+    return JSON.parse(JSON.stringify(msg));
+  } catch (e) {
+    return msg;
+  }
 }
 
 // ─── Helper: Parse agent output ───────────────────────────────────────────────
@@ -388,91 +396,95 @@ export function createCallSession(callerPhone = '', options = {}) {
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
 
-  const runner = new Runner({
-    traceMetadata: {
-      __trace_source__: "voice-ai-platform",
-      workflow_id: "wf_meesho_reseller_v3"
-    }
-  });
-
-  // Debug: Log tool availability
-  if (options.logger) {
-    options.logger.info('[Workflow] Tools loaded:', {
-      validateEmailTool: !!validateEmailTool,
-      validateEmailTool_props: validateEmailTool ? Object.keys(validateEmailTool) : [],
-      normalizeSpokenEmailTool: !!normalizeSpokenEmailTool,
-      validatePriceRangeTool: !!validatePriceRangeTool,
-      normalizeListingDateTool: !!normalizeListingDateTool,
-      searchKnowledgeBaseTool: !!searchKnowledgeBaseTool
-    });
-  }
-
   // ── Internal runner ─────────────────────────────────────────────────────
 
   async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
+    const myProcessingId = currentProcessingId; // Capture current ID to detect aborts
+
     return await withTrace("Reseller Qualification", async () => {
+      // Isolate Runner per turn to prevent cross-talk and race conditions
+      const turnRunner = new Runner({
+        traceMetadata: {
+          __trace_source__: "voice-ai-platform",
+          workflow_id: "wf_meesho_reseller_v3"
+        }
+      });
+
       // System message is now handled externally/consistently
       const systemMessage = sanitizeMessage({
         role: 'system',
         content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
       });
 
-      // We do NOT push userMessage here anymore. It's pushed in processTranscript.
+      // --- Smart History Slicing ---
+      // We slice the last 10 turns, but we must NOT start with a 'tool' role
+      // if its corresponding 'assistant' call is outside the window.
+      let trimmedHistory = [...conversationHistory];
+      if (trimmedHistory.length > 10) {
+        let sliceIdx = trimmedHistory.length - 10;
+        // Search backwards for a safe starting point (cannot start with 'tool')
+        while (sliceIdx < trimmedHistory.length && trimmedHistory[sliceIdx].role === 'tool') {
+          sliceIdx++;
+        }
+        trimmedHistory = trimmedHistory.slice(sliceIdx);
+      }
+      trimmedHistory = trimmedHistory.map(sanitizeMessage);
 
-      // Limit conversation history to last 10 turns and sanitize
-      const trimmedHistory = conversationHistory.slice(-10).map(sanitizeMessage);
-
-      const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
+      const stream = await turnRunner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
 
       let finalOutputText = "";
       let sentLength = 0;
 
       for await (const event of stream) {
+        // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
+        if (myProcessingId !== currentProcessingId) {
+          if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
+          break;
+        }
+
         if (!event.type.includes('raw_model')) {
-          console.log(`[Stream Event]`, event.type);
-        }
 
-        // Handle raw string events (non-tool calls)
-        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
-          finalOutputText += event.data.text;
-        }
-        // Handle @openai/agents v0.0.5 structured json streaming object deltas
-        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
-          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
-          if (contentObj && contentObj.text) {
-            finalOutputText = contentObj.text; // the framework accumulates the full string here
+          // Handle raw string events (non-tool calls)
+          if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
+            finalOutputText += event.data.text;
           }
-        }
-        else if (event.type === 'model_text_delta') {
-          finalOutputText += event.data.textDelta || event.data.delta || '';
-        }
+          // Handle @openai/agents v0.0.5 structured json streaming object deltas
+          else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+            const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+            if (contentObj && contentObj.text) {
+              finalOutputText = contentObj.text; // the framework accumulates the full string here
+            }
+          }
+          else if (event.type === 'model_text_delta') {
+            finalOutputText += event.data.textDelta || event.data.delta || '';
+          }
 
-        // Try to parse 'say' from whatever we've accumulated so far
-        if (onSayChunk && finalOutputText) {
-          // Look for "say": "..." pattern. Handle opening quote through current end.
-          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
-          if (sayMatch) {
-            const currentSay = sayMatch[1];
-            // Unescape common JSON characters
-            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+          // Try to parse 'say' from whatever we've accumulated so far
+          if (onSayChunk && finalOutputText) {
+            // Look for "say": "..." pattern. Handle opening quote through current end.
+            const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+            if (sayMatch) {
+              const currentSay = sayMatch[1];
+              // Unescape common JSON characters
+              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
 
-            if (unescaped.length > sentLength) {
-              const chunk = unescaped.substring(sentLength);
-              sentLength = unescaped.length;
-              onSayChunk(chunk);
+              if (unescaped.length > sentLength) {
+                const chunk = unescaped.substring(sentLength);
+                sentLength = unescaped.length;
+                onSayChunk(chunk);
+              }
             }
           }
         }
-      }
 
-      await stream.completed;
-      if (!nodeOptions.skipHistory) {
-        // Sanitize new items before storing
-        const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
-        conversationHistory.push(...newItems);
-      }
-      return stream.finalOutput;
-    });
+        await stream.completed;
+        if (!nodeOptions.skipHistory) {
+          // Sanitize new items before storing
+          const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+          conversationHistory.push(...newItems);
+        }
+        return stream.finalOutput;
+      });
   }
 
   // ── Mark node as done when leaving it ──────────────────────────────────

@@ -42,9 +42,12 @@ export const validateEmailTool = tool({
     name: 'validate_email',
     description: 'Validates an email address for correct format. Use this tool after collecting an email from the caller to verify it is valid before proceeding.',
     parameters: z.object({
-        email: z.string().describe('The email address to validate (already normalized from speech)')
+        email: z.string().describe('The email address to validate.').optional(),
+        normalized_email: z.string().describe('Alias for email.').optional()
     }),
-    execute: async ({ email }) => {
+    execute: async (params) => {
+        const email = params.email || params.normalized_email;
+        if (!email) return { valid: false, error: "No email provided to validate." };
         const normalized = email.trim().toLowerCase();
 
         // RFC 5322 simplified email regex
@@ -88,10 +91,13 @@ export const normalizeSpokenEmailTool = tool({
     name: 'normalize_spoken_email',
     description: 'Converts a speech-transcribed email into proper email format. Handles "at" → @, "dot" → ., spelled-out letters, etc. Use this tool BEFORE validate_email when the caller dictates their email address.',
     parameters: z.object({
-        spoken_email: z.string().describe('The raw ASR transcript of the caller speaking their email address (e.g., "name at gmail dot com")')
+        spoken_email: z.string().describe('The raw ASR transcript of the caller speaking their email address (e.g., "name at gmail dot com")').optional(),
+        email: z.string().describe('Alias for spoken_email').optional()
     }),
-    execute: async ({ spoken_email }) => {
-        let email = spoken_email.trim().toLowerCase();
+    execute: async (params) => {
+        const inputStr = params.spoken_email || params.email;
+        if (!inputStr) return { normalized_email: "" };
+        let email = inputStr.trim().toLowerCase();
 
         // Common ASR speech-to-email normalizations
         email = email
