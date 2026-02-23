@@ -634,24 +634,26 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       if (options.logger) {
         const type = typeof result;
-        const preview = type === 'string' ? result.substring(0, 100) : (type === 'object' ? JSON.stringify(result).substring(0, 100) : result);
-        options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} result type: ${type}`, { preview });
+        const preview = type === 'string' ? result.substring(0, 150) : (type === 'object' ? JSON.stringify(result).substring(0, 150) : result);
+        options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} RAW result (${type}): ${preview}`);
       }
 
       // Robust parsing: handle both objects and JSON strings
+      // We must check if it's a string, and if so, try to parse it. 
+      // Library often returns stringified JSON even if the tool returned an object.
       if (typeof result === 'string') {
         const trimmed = result.trim();
+        // If it starts with { or [, it's likely JSON
         if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
           try {
             const parsed = JSON.parse(trimmed);
-            if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} JSON string parsed successfully`);
+            if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} JSON string unwrapped successfully`);
             return parsed;
           } catch (e) {
-            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned string that looked like JSON but failed to parse: ${trimmed.substring(0, 100)}...`);
+            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned JSON-like string but failed parse: ${trimmed.substring(0, 50)}...`);
             return result;
           }
         }
-        return result;
       }
       return result;
     };
