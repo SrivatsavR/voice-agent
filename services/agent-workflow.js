@@ -110,11 +110,12 @@ Refer to the current session data provided to see what is already captured.
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
 
 ── 7. HANDLING QUESTIONS ──
-If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST check if you already have the answer in the conversation history or in [SYSTEM: Knowledge Base Results].
-- If you DON'T have the answer: Set 'kb_query' in your 'updates_json' to the user's question. Acknowledge that you are checking, e.g., "Main check karke batati hoon."
-- If you DO have [SYSTEM: Knowledge Base Results] in the latest turn: Use ONLY that information to provide a crisp, friendly answer in Hindi. Do NOT use your own knowledge if it contradicts the provided context.
+If the caller/user asks a question about Meesho (benefits, commission, shipping, T&C, etc.), you MUST follow this protocol:
+- If you DON'T see [SYSTEM: Knowledge Base Results] in the history: Set 'kb_query' in your 'updates_json' to the question and say exactly "Zaroor, main check karke batati hoon."
+- If you DO see [SYSTEM: Knowledge Base Results] in the latest user message: Synthesize a friendly, crisp answer in simple Hindi/Hinglish using ONLY that provided context. 
+- PROMPT PRIORITY: Answering the user's question from KB results is higher priority than asking for their name/items.
 - ALWAYS end every answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-- The system provides the context in the next turn under the marker [SYSTEM: Knowledge Base Results].
+- NEVER use your own training data for facts about Meesho if they contradict the KB results.
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -621,18 +622,26 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       let result;
-      if (toolObj.invoke) {
-        result = await toolObj.invoke(params);
-      } else if (toolObj.execute) {
-        result = await toolObj.execute(params);
-      } else if (typeof toolObj === 'function') {
-        result = await toolObj(params);
-      } else {
-        if (options.logger) options.logger.error('[Workflow] Tool not executable', {
-          type: typeof toolObj,
-          keys: Object.keys(toolObj)
-        });
-        throw new Error('Tool object is not executable');
+      // Robust tool execution supporting multiple patterns (invoke, execute, direct function)
+      try {
+        if (toolObj.invoke && typeof toolObj.invoke === 'function') {
+          result = await toolObj.invoke(params);
+        } else if (toolObj.execute && typeof toolObj.execute === 'function') {
+          result = await toolObj.execute(params);
+        } else if (typeof toolObj === 'function') {
+          result = await toolObj(params);
+        } else {
+          // Fallback check for common tool object structures
+          const runFn = toolObj.run || toolObj.call;
+          if (typeof runFn === 'function') {
+            result = await runFn.call(toolObj, params);
+          } else {
+            throw new Error(`Tool object ${toolObj.name || 'unknown'} is not executable`);
+          }
+        }
+      } catch (err) {
+        if (options.logger) options.logger.error(`[Workflow] Tool execution failed: ${toolObj.name || 'unknown'}`, err);
+        throw err;
       }
 
       if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} result type: ${typeof result}`);
@@ -799,18 +808,20 @@ export function createCallSession(callerPhone = '', options = {}) {
         const query = updates.kb_query;
         delete updates.kb_query;
         delete session.kb_query; // Clear from session to prevent loops
-        Promise.resolve().then(async () => {
-          try {
-            const kbResult = await runTool(searchKnowledgeBaseTool, { query });
-            if (isActiveCallback() && currentProcId === currentProcessingId) {
-              if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
-              await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
+        if (tts) {
+          // VOICE: Fire background transition and recursive turn
+          Promise.resolve().then(async () => {
+            try {
+              const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+              if (isActiveCallback() && currentProcId === currentProcessingId) {
+                if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
+                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
+              }
+            } catch (e) {
+              if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
             }
-          } catch (e) {
-            console.error(e);
-            if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
-          }
-        });
+          });
+        }
       }
     };
 
@@ -955,6 +966,22 @@ export function createCallSession(callerPhone = '', options = {}) {
     // Standard Path
     const finalLLMOutput = await llmPromise;
     if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: false };
+
+    // Chat-specific RAG Handling: If KB query is requested and we are in chat mode (no tts),
+    // wait for the result and perform the recursive turn synchronously so the user gets the final answer.
+    if (!tts && finalLLMOutput.updates?.kb_query) {
+      const query = finalLLMOutput.updates.kb_query;
+      if (options.logger) options.logger.info(`[Chat-RAG] Sync-handling query: ${query}`);
+
+      try {
+        const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+        // Perform recursive turn synchronously
+        return await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null);
+      } catch (err) {
+        if (options.logger) options.logger.error('[Chat-RAG] Sync KB query failed', err);
+        // Fallback to the acknowledgment "Main check karke batati hoon"
+      }
+    }
 
     if (finalLLMOutput.updates) {
       Object.assign(session, finalLLMOutput.updates);

@@ -6,7 +6,7 @@ import twilio from 'twilio';
 import { ElevenLabsASR } from './services/elevenlabs-asr.js';
 import { DeepgramASR } from './services/deepgram-asr.js';
 import { transcribeAudioBurst } from './utils/deepgram-rest.js';
-import { validateGSTINTool, normalizeSpokenEmailTool, validateEmailTool } from './utils/validators.js';
+import { normalizeSpokenEmailTool, validateEmailTool } from './utils/validators.js';
 import { ElevenLabsTTS } from './services/elevenlabs-tts.js';
 import { createCallSession } from './services/agent-workflow.js';
 import { generateContextualFiller } from './services/silence-filler-llm.js';
@@ -531,15 +531,11 @@ wss.on('connection', (ws) => {
                   const sess = callSession.getSession();
                   const cleanedBurst = burst.transcript.replace(/[\s\-]/g, '').toUpperCase();
 
-                  // If it looks like a GST (15 chars)
+                  // If it looks like a GST (15 chars) - Simply Collect
                   if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
-                    const val = await validateGSTINTool.invoke({ gstin: cleanedBurst });
-                    const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
-                    if (parsedVal.valid) {
-                      sess.gstin = parsedVal.normalized;
-                      sess.gstin_valid = true;
-                      callLog.withComponent('Validation').info(`[Burst Success] Corrected GSTIN from burst: ${parsedVal.normalized}`);
-                    }
+                    sess.gstin = cleanedBurst;
+                    sess.gstin_valid = true; // Mark as collected
+                    callLog.withComponent('Validation').info(`[Burst Success] Collected GSTIN from burst: ${cleanedBurst}`);
                   }
                   // If it looks like an email
                   else if (burst.transcript.includes('@') || burst.transcript.includes(' at ')) {

@@ -82,3 +82,4 @@ export const searchKnowledgeBaseTool = tool({
         }
     }
 });
+searchKnowledgeBaseTool.invoke = (args) => searchKnowledgeBaseTool.execute(args);

@@ -78,9 +78,10 @@ export const validateEmailTool = tool({
                 result.suggested_email = `${normalized.split('@')[0]}@${suggestions[domain]}`;
             }
         }
-        return JSON.stringify(result);
+        return result; // RETURN OBJECT DIRECTLY so tool callers don't have to JSON.parse
     }
 });
+validateEmailTool.invoke = (args) => validateEmailTool.execute(args);
 
 // ─── Spoken Email Normalizer Tool ─────────────────────────────────────────────
 
@@ -118,61 +119,9 @@ export const normalizeSpokenEmailTool = tool({
         return { normalized_email: email };
     }
 });
+normalizeSpokenEmailTool.invoke = (args) => normalizeSpokenEmailTool.execute(args);
 
-// ─── GSTIN Validation Tool ────────────────────────────────────────────────────
-
-export const validateGSTINTool = tool({
-    name: 'validate_gstin',
-    description: 'Validates an Indian GSTIN (GST Identification Number) for correct format and checksum. Use this tool after collecting GSTIN from the caller. GSTIN is 15 characters: 2-digit state code + 10 chars PAN + 1 entity number + Z + 1 check digit.',
-    parameters: z.object({
-        gstin: z.string().describe('The GSTIN to validate (spaces removed, uppercased)')
-    }),
-    execute: async ({ gstin }) => {
-        const normalized = gstin.replace(/\s+/g, '').toUpperCase();
-        const result = { normalized };
-
-        // Length check
-        if (normalized.length !== 15) {
-            result.valid = false;
-            result.error = `GSTIN must be exactly 15 characters. Received ${normalized.length} characters. Ask the caller to read it again slowly, one group at a time.`;
-            return JSON.stringify(result);
-        }
-
-        // Format regex: 2 digits + 5 uppercase letters + 4 digits + 1 letter + 1 alphanumeric + Z + 1 alphanumeric
-        const gstinRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]$/;
-        if (!gstinRegex.test(normalized)) {
-            result.valid = false;
-            result.error = 'GSTIN format is invalid. Expected pattern: 2 digits, 5 letters, 4 digits, 1 letter, 1 alphanumeric, Z, 1 alphanumeric. Ask the caller to verify and repeat.';
-            return JSON.stringify(result);
-        }
-
-        // State code validation
-        const stateCode = normalized.substring(0, 2);
-        if (!VALID_STATE_CODES[stateCode]) {
-            result.valid = false;
-            result.error = `State code "${stateCode}" is not a recognized Indian state/UT code. The first two digits may be incorrect.`;
-            return JSON.stringify(result);
-        }
-
-        // Checksum validation
-        const expectedCheck = computeGSTINChecksum(normalized.substring(0, 14));
-        if (normalized[14] !== expectedCheck) {
-            result.valid = false;
-            result.error = 'GSTIN checksum digit does not match. The number may have a typo. Ask the caller to read it again carefully.';
-            return JSON.stringify(result);
-        }
-
-        // Extract PAN from GSTIN (chars 2-11)
-        const pan = normalized.substring(2, 12);
-
-        result.valid = true;
-        result.state_code = stateCode;
-        result.state_name = VALID_STATE_CODES[stateCode];
-        result.embedded_pan = pan;
-        result.entity_type = normalized[14] === 'Z' ? 'Regular' : 'Special';
-        return result;
-    }
-});
+// validateGSTINTool removed as per user request
 
 // ─── Indian Phone Number Validation Tool ──────────────────────────────────────
 
@@ -208,6 +157,7 @@ export const validatePhoneTool = tool({
         return result;
     }
 });
+validatePhoneTool.invoke = (args) => validatePhoneTool.execute(args);
 
 // ─── Price Range Validation Tool ──────────────────────────────────────────────
 
@@ -254,6 +204,7 @@ export const validatePriceRangeTool = tool({
         return result;
     }
 });
+validatePriceRangeTool.invoke = (args) => validatePriceRangeTool.execute(args);
 
 // ─── Listing Date Normalization Tool ──────────────────────────────────────────
 
@@ -313,3 +264,4 @@ export const normalizeListingDateTool = tool({
         };
     }
 });
+normalizeListingDateTool.invoke = (args) => normalizeListingDateTool.execute(args);
