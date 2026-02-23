@@ -213,15 +213,20 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
-Conclude the call. Inform them about the WhatsApp link. Answer any questions using the tool.
+Conclude the call professionally.
 
 === FLOW ===
-1. **Closing**: "Saari details collect ho gayi hain. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **QnA**: If they ask anything, set 'kb_query' in 'updates_json' to their question.
+1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
+   Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+2. **Handle Questions**: If the user asks a question, use the 'searchKnowledgeBaseTool' by setting 'kb_query' in 'updates_json'.
+3. **Handle No Questions / Post-Answer**: If the user has no more questions (or says "no", "that's it", "theek hai"), sign off and end the call.
+   Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad!"
+   Set next_node to "TERM_COMPLETE".
 
 === RULES ===
-- EVERY response must end with a question mark until they are ready to hang up.
-- You do not need to answer immediately, the system will answer if you set kb_query.`,
+- Do NOT end the call on the first closing. Always ask if they have questions.
+- If they ask a question, answer it (via tool), then return to the closing pitch about WhatsApp and thank them for their time.
+- Only move to TERM_COMPLETE when the user indicates they are finished.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -366,21 +371,29 @@ export function createCallSession(callerPhone = '', options = {}) {
       // Create a static System Message to reduce input tokens in instructions
       const systemMessage = {
         role: 'system',
-        content: [{
-          type: 'input_text',
-          text: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
-        }]
+        content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
       };
 
       if (userMessage) {
         conversationHistory.push({
           role: 'user',
-          content: [{ type: 'input_text', text: userMessage }]
+          content: userMessage
         });
       }
 
-      // Limit conversation history to last 10 turns to keep prompt size small
-      const trimmedHistory = conversationHistory.slice(-10);
+      // Limit conversation history to last 10 turns and sanitize items
+      const trimmedHistory = conversationHistory.slice(-10).map(msg => {
+        if (Array.isArray(msg.content)) {
+          return {
+            ...msg,
+            content: msg.content.map(c => {
+              if (c.type === 'text') return { ...c, type: msg.role === 'assistant' ? 'output_text' : 'input_text' };
+              return c;
+            })
+          };
+        }
+        return msg;
+      });
 
       const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
 
@@ -426,7 +439,18 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       await stream.completed;
-      conversationHistory.push(...stream.newItems.map(item => item.rawItem));
+      // Sanitize new items before storing to avoid 'text' type issues on next turn
+      const newItems = stream.newItems.map(item => {
+        const raw = item.rawItem;
+        if (raw.content && Array.isArray(raw.content)) {
+          raw.content = raw.content.map(c => {
+            if (c.type === 'text') return { ...c, type: raw.role === 'assistant' ? 'output_text' : 'input_text' };
+            return c;
+          });
+        }
+        return raw;
+      });
+      conversationHistory.push(...newItems);
       return stream.finalOutput;
     });
   }
