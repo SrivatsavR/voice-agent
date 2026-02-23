@@ -135,9 +135,10 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
-  2. If interested but Name is missing: Ask "Aapka naam kya hai?".
-  3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
+  1. If 'interest_in_meesho' is missing AND 'pitch_delivered' is not true: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur zero logistics charges ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?". Set 'pitch_delivered' to true in 'updates_json'.
+  2. If 'interest_in_meesho' is missing AND 'pitch_delivered' is true: Ask "Toh kya aap Meesho par apne products sell karna chahte hain?".
+  3. If interested but Name is missing: Ask "Aapka naam kya hai?".
+  4. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -169,7 +170,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 
 === QUESTION FLOW ===
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?"
+2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?". If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
 3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
    - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
@@ -269,6 +270,7 @@ const DEFAULT_SESSION = {
   interest_in_meesho: 'unknown',
   has_bank_account: '',
   callback_time: '',
+  pitch_delivered: false,
   // Node 2
   products_sold: [],
   price_min: null,
@@ -464,9 +466,16 @@ export function createCallSession(callerPhone = '', options = {}) {
         handle: (match, session) => {
           const name = match[2].trim();
           if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+            if (session.pitch_delivered) {
+              return {
+                updates: { name_spoken: name },
+                say: `Achha, ${name} ji. Toh kya aap Meesho par apne products bechna chahte hain?`,
+                next_node: 'CONTINUE'
+              };
+            }
             return {
-              updates: { name_spoken: name },
-              say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne products bechna chahte hain?`,
+              updates: { name_spoken: name, pitch_delivered: true },
+              say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur zero logistics charges ka fayda milta hai. Kya aap Meesho par apne products bechna chahte hain?`,
               next_node: 'CONTINUE'
             };
           }
@@ -481,11 +490,8 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
           if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
-            return {
-              updates: {}, // Explicitly do NOT set interest yet
-              say: "Ji. Meesho par fourteen crore customers hain aur zero commission hai. Kya aap hamare saath products bechna chahte hain?",
-              next_node: 'CONTINUE'
-            };
+            // Let the LLM definitively handle "haan" if the pitch was just delivered
+            return null;
           } else if (session.name_spoken && !session.has_bank_account) {
             return {
               updates: { has_bank_account: 'yes' },
@@ -584,10 +590,11 @@ export function createCallSession(callerPhone = '', options = {}) {
                 options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
+              session.email_valid = false;
               session.email_attempts = (session.email_attempts || 0) + 1;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', val);
-                await processTranscript(`[SYSTEM: Verification failed. Email invalid: ${val ? val.error : 'unknown error'}. Ask for email again.]`, tts, silenceFiller);
+                await processTranscript(`[SYSTEM: Email "${candidate}" is invalid: ${val ? val.error : 'format error'}. Politely ask the user to correct it.]`, tts, silenceFiller);
               }
             }
           } catch (e) {
@@ -598,7 +605,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_email_running = false;
-            delete session.raw_email;
+            if (session.email_valid) {
+              delete session.raw_email;
+            }
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -625,10 +634,11 @@ export function createCallSession(callerPhone = '', options = {}) {
                 if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: val.normalized, gstin_valid: true } });
               }
             } else if (!val?.valid && currentProcId === currentProcessingId) {
+              session.gstin_valid = false;
               session.gst_attempts = (session.gst_attempts || 0) + 1;
               if (isActiveCallback()) {
                 if (options.logger) options.logger.withComponent('Validation').warn('[Background] GST Invalid', val);
-                await processTranscript(`[SYSTEM: Verification failed. GSTIN invalid: ${val ? val.error : 'unknown error'}. Be helpful.]`, tts, silenceFiller);
+                await processTranscript(`[SYSTEM: GST "${candidate}" is invalid: ${val ? val.error : 'format error'}. Ask the user for the correct 15-digit GST number.]`, tts, silenceFiller);
               }
             }
           } catch (e) {
@@ -639,7 +649,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_gst_running = false;
-            delete session.raw_gstin;
+            if (session.gstin_valid) {
+              delete session.raw_gstin;
+            }
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -667,7 +679,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_listing_running = false;
-            delete session.raw_listing_start;
+            if (session.listing_start) {
+              delete session.raw_listing_start;
+            }
           }
         });
       }
@@ -706,8 +720,10 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_price_running = false;
-            delete session.raw_price_min;
-            delete session.raw_price_max;
+            if (session.price_min && !isNaN(parseFloat(session.price_min))) {
+              delete session.raw_price_min;
+              delete session.raw_price_max;
+            }
           }
         });
       }
