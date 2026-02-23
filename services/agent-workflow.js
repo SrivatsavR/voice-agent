@@ -3,13 +3,11 @@ import { Logger } from '../utils/logger.js';
 import {
   validateEmailTool,
   normalizeSpokenEmailTool,
-  validateGSTINTool,
   validatePhoneTool,
   validatePriceRangeTool,
   normalizeListingDateTool,
   validateEmailTool as validateEmail,
   normalizeSpokenEmailTool as normalizeSpokenEmail,
-  validateGSTINTool as validateGSTIN,
   validatePriceRangeTool as validatePriceRange,
   normalizeListingDateTool as normalizeListingDate
 } from '../utils/validators.js';
@@ -138,7 +136,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
+  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?". Deliver this FULL pitch even if the user just says "Hi" or "Hello".
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -147,7 +145,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 |--------|--------|--------|
 | GIVING_NAME | user provides name | Update 'name_spoken'. |
 | INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
-| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
+| NOT INTERESTED | "no", "nahi", "not interested" | Set interest_in_meesho: "no", next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
 
@@ -189,27 +187,28 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
-Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
+Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already gave it, skip.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
-2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
-3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
+1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
+2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
+   - Ask: "Kya aapke paas 15-digit GST number hai? Agar nahi hai toh aap Enrollment ID bhi de sakte hain."
+3. **Finish**: Once Email and (GST OR UIN) are captured, set next_node: NODE_4_CLOSURE and ask the first question of Node 4.
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
-| HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
-| GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
-| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
-| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
-| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
+| GIVING_EMAIL | User provides email | Set 'raw_email'. |
+| GIVING_GST | User provides 15-char GST | Set 'raw_gstin', move to NODE_4_CLOSURE. |
+| HAS_GST | "Yes", "I have it" | Ask "Aapka GST number bataye?". |
+| NO_GST | "No", "Don't have it" | Set 'gst_declined': true, ask for Enrollment ID. |
+| GIVING_UIN | User provides Enrollment ID/UIN | Set 'uin', move to NODE_4_CLOSURE. |
 
-=== ROUTING ===
+=== RULES ===
+- If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
+- Do NOT repeat questions if data is in system context.
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
-- Every 'say' MUST end with a question mark.`,
+- Move to NODE_4_CLOSURE naturally. Your 'say' MUST be: "Bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?".`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -232,9 +231,11 @@ Thank the user for their time and details, then proactively ask if they have any
    - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- NEVER end the call immediately after taking details. Always ask "Kya aapko kuch aur jaanna hai?".
+- NEVER ask if the user is interested in Meesho again; that was already confirmed in Node 1.
+- DO NOT repeat the onboarding pitch.
 - Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
-- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
+- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.
+- Ensure every 'say' ends with a question, except for the final goodbye.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [searchKnowledgeBaseTool]
@@ -264,8 +265,8 @@ const DEFAULT_SESSION = {
   caller_phone: '',
   // Node 1
   name_spoken: '',
-  is_right_person: 'unknown',
-  interest_in_meesho: 'unknown',
+  is_right_person: '',
+  interest_in_meesho: '',
   has_bank_account: '',
   callback_time: '',
   pitch_delivered: false,
@@ -273,26 +274,25 @@ const DEFAULT_SESSION = {
   products_sold: [],
   price_min: null,
   price_max: null,
-  switch_speed_days: null,
-  switch_speed_bucket: '',
+  raw_price_min: '',
+  raw_price_max: '',
   listing_start: '',
+  raw_listing_start: '',
   // Node 3
   email: '',
   email_valid: false,
   email_attempts: 0,
+  raw_email: '',
   gstin: '',
   gstin_valid: false,
+  gst_attempts: 0,
+  raw_gstin: '',
   gst_declined: false,
   uin: '',
-  gst_attempts: 0,
-  pan_number: '',
-  pan_skipped: false,
   // Node 4
-  questions_asked: 0,
-  summary_confirmed: false,
-  call_outcome: '',
-  correction_requested: '',
-  // Progress flags
+  kb_query: '',
+  call_outcome: 'in_progress',
+  // Internal
   node0_done: false,
   node1_done: false,
   node2_done: false,
@@ -501,7 +501,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(mera naam|my name is|main|i am|this is|मेरा नाम|मैं) (.*?)(?: hai| hoon|है|हूं)?$/i,
         handle: (match, session) => {
           const name = match[2].trim();
-          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+          if (!session.interest_in_meesho) {
             if (session.pitch_delivered) {
               return {
                 updates: { name_spoken: name },
@@ -525,7 +525,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
-          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+          if (!session.interest_in_meesho) {
             // Let the LLM definitively handle "haan" if the pitch was just delivered
             return null;
           } else if (session.name_spoken && !session.has_bank_account) {
@@ -615,22 +615,20 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (silenceFiller) silenceFiller.pause();
             const normStr = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
             const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
-            const valStr = await runTool(validateEmailTool, { email: norm.normalized_email });
-            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-
-            if (val?.valid) {
-              session.email = val.normalized;
+            // Simple validation: check for @ and .
+            if (norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
+              session.email = norm.normalized_email;
               session.email_valid = true;
               if (options.logger) {
-                options.logger.withComponent('Validation').info('[Background] Email Validated');
-                options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
+                options.logger.withComponent('Validation').info('[Background] Email Simplified Validation Passed');
+                options.logger.withComponent('Database').info('Saving session updates', { updates: { email: norm.normalized_email, email_valid: true } });
               }
-            } else if (!val?.valid && currentProcId === currentProcessingId) {
+            } else if (currentProcId === currentProcessingId) {
               session.email_valid = false;
               session.email_attempts = (session.email_attempts || 0) + 1;
               if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', val);
-                await processTranscript(`[SYSTEM: Email "${candidate}" is invalid: ${val ? val.error : 'format error'}. Politely ask the user to correct it.]`, tts, silenceFiller);
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid (Simplified)');
+                await processTranscript(`[SYSTEM: Email "${candidate}" is invalid. Politely ask the user to repeat the email address.]`, tts, silenceFiller);
               }
             }
           } catch (e) {
@@ -656,23 +654,13 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            const valStr = await runTool(validateGSTINTool, { gstin: candidate });
-            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
-
-            if (val?.valid && currentProcId === currentProcessingId) {
-              session.gstin = val.normalized;
-              session.gstin_valid = true;
-              if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Validated');
-                if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: val.normalized, gstin_valid: true } });
-              }
-            } else if (!val?.valid && currentProcId === currentProcessingId) {
-              session.gstin_valid = false;
-              session.gst_attempts = (session.gst_attempts || 0) + 1;
-              if (isActiveCallback()) {
-                if (options.logger) options.logger.withComponent('Validation').warn('[Background] GST Invalid', val);
-                await processTranscript(`[SYSTEM: GST "${candidate}" is invalid: ${val ? val.error : 'format error'}. Ask the user for the correct 15-digit GST number.]`, tts, silenceFiller);
-              }
+            // Removal of GST Validation as per user request
+            const normalized = candidate.replace(/\s+/g, '').toUpperCase();
+            session.gstin = normalized;
+            session.gstin_valid = true;
+            if (isActiveCallback()) {
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Collected (Validation Skipped)');
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true } });
             }
           } catch (e) {
             console.error(e);
@@ -865,11 +853,29 @@ export function createCallSession(callerPhone = '', options = {}) {
         const actN = (actual.updates?.interest_in_meesho === 'no' || actual.updates?.has_bank_account === 'no');
         const termC = (actual.next_node && actual.next_node.startsWith('TERM_'));
 
-        // Name check
-        const nameMismatch = fastMatchResult.updates?.name_spoken && actual.updates?.name_spoken && fastMatchResult.updates.name_spoken !== actual.updates.name_spoken;
+        // Name check: Fuzzy comparison to avoid conflicts on case or language script differences
+        let nameMismatch = false;
+        if (fastMatchResult.updates?.name_spoken && actual.updates?.name_spoken) {
+          const name1 = fastMatchResult.updates.name_spoken.toLowerCase().trim();
+          const name2 = actual.updates.name_spoken.toLowerCase().trim();
+
+          // Simple heuristic: If one is a substring of another or they are equal, it's not a mismatch
+          // This avoids conflict when LLM refines "अमृता" to "Amrita" or adding a last name.
+          // Since they are from the same recording, we trust the LLM more but don't want to apologize if they are "close"
+          if (name1 !== name2) {
+            // If both are different scripts (one has non-ascii, other is ascii), we might assume they are the same if the turn was the same
+            const isHindi = (str) => /[\u0900-\u097F]/.test(str);
+            if (isHindi(name1) !== isHindi(name2)) {
+              // If script differs, we don't treat it as a "mismatch" that needs an apology, we just prefer the LLM's version.
+              nameMismatch = false;
+            } else {
+              nameMismatch = true;
+            }
+          }
+        }
 
         if ((predY && actN) || termC || nameMismatch) {
-          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}`);
+          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}, termC=${termC}`);
           if (isActiveCallback()) {
             tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
             Object.assign(session, actual.updates);
