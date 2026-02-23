@@ -367,7 +367,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       const systemMessage = {
         role: 'system',
         content: [{
-          type: 'text',
+          type: 'input_text',
           text: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
         }]
       };
