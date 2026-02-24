@@ -55,16 +55,22 @@ If you need to use a tool (like searchKnowledgeBaseTool), you MUST do so by retu
 - 'products_sold': **ARRAY** of strings.
 - 'interest_in_meesho': "yes" or "no".
 
-=== RESPONSE FORMAT ===
-Strictly return JSON.
+=== RESPONSE FORMAT (MANDATORY) ===
+You MUST respond with ONLY a JSON object. No markdown, no explanation, no preamble.
+The JSON MUST have exactly these 4 keys in this exact order:
 {
   "say": "Short crisp Hindi/Hinglish question?",
   "updates_json": "{\"key\": \"value\"}",
   "next_node": "TARGET_NODE_NAME",
   "notes": "1-word status"
 }
-- "say" field MUST be the first key.
-- Keep "notes" to exactly one word.
+RULES:
+- "say" MUST be the FIRST key in the JSON.
+- Do NOT wrap in markdown code fences.
+- Do NOT include any text before or after the JSON.
+- "updates_json" must be a JSON string (escaped), not a raw object.
+- "next_node" must be a valid node name or "CONTINUE".
+- "notes" must be exactly one word.
 - Capture updates only for MISSING data.
 `;
 
@@ -159,8 +165,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho', 'name_spoken', AND 'has_bank_account' are fully captured.
 - Once all are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
 - Every 'say' MUST end with a question mark.`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  model: "gpt-4.1-nano",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
   tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
@@ -184,8 +190,8 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 === ROUTING ===
 - Stay in NODE_2_DETAILS until all questions are answered ('products_sold', 'price_min'/'raw_price_min', and 'listing_start'/'raw_listing_start' are collected).
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  model: "gpt-4.1-nano",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
   tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
@@ -222,8 +228,8 @@ Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already g
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
 - **NEVER use terminal nodes** (TERM_*) from this node. Always route to NODE_4_CLOSURE for the final wrap-up.
 - Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with the bridge: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  model: "gpt-4.1-nano",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
   tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
@@ -251,8 +257,8 @@ Thank the user for their time and details, then proactively ask if they have any
 - NEVER ask if the user is interested in Meesho again.
 - DO NOT repeat the onboarding pitch.
 - Ensure every 'say' ends with a question, except for the final goodbye.`,
-  model: "gpt-4o-mini",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  model: "gpt-4.1-nano",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
   tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
@@ -421,8 +427,8 @@ export function createCallSession(callerPhone = '', options = {}) {
         // We ensure that we never start history with a 'tool' role.
         // We also strip library-internal fields to keep it clean for OpenAI.
         let messages = [...conversationHistory];
-        if (messages.length > 20) {
-          let sliceIdx = messages.length - 20;
+        if (messages.length > 10) {
+          let sliceIdx = messages.length - 10;
           // Search backwards for a safe starting point (must be 'user' or 'assistant' without pending tool calls)
           while (sliceIdx < messages.length && (messages[sliceIdx].role === 'tool' || (messages[sliceIdx].role === 'assistant' && messages[sliceIdx].tool_calls))) {
             sliceIdx++;
@@ -902,8 +908,20 @@ export function createCallSession(callerPhone = '', options = {}) {
     const llmPromise = (async () => {
       try {
         let ttsBuffer = "";
+        let firstChunkLogged = false;
+        let ttsFirstSentLogged = false;
+        const llmStartTime = performance.now();
         const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
           return await runNode(agent, userMessage, (chunk) => {
+            if (!firstChunkLogged) {
+              firstChunkLogged = true;
+              if (options.logger) {
+                options.logger.withComponent('Timing').info('LLM first say chunk', {
+                  ttft_ms: Math.round(performance.now() - llmStartTime),
+                  chunk_preview: chunk.substring(0, 40)
+                });
+              }
+            }
             if (!fastMatchResult && tts && isActiveCallback()) {
               streamedCount += chunk.length;
               ttsBuffer += chunk;
@@ -912,6 +930,15 @@ export function createCallSession(callerPhone = '', options = {}) {
                 if (bIdx > 0 || ttsBuffer.split(/\s+/).length >= 6) {
                   const toSendArr = ttsBuffer.substring(0, bIdx || ttsBuffer.length);
                   tts.sendText(toSendArr);
+                  if (!ttsFirstSentLogged) {
+                    ttsFirstSentLogged = true;
+                    if (options.logger) {
+                      options.logger.withComponent('Timing').info('TTS first text sent', {
+                        time_since_llm_start_ms: Math.round(performance.now() - llmStartTime),
+                        text_preview: toSendArr.substring(0, 40)
+                      });
+                    }
+                  }
                   ttsBuffer = ttsBuffer.substring(bIdx || ttsBuffer.length);
                 }
               }

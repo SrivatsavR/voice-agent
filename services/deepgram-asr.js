@@ -52,7 +52,7 @@ export class DeepgramASR {
             punctuate: 'false',
             interim_results: 'true',
             endpointing: '300',
-            utterance_end_ms: '2000',
+            utterance_end_ms: '1000',
             vad_events: 'true',
             smart_format: 'false',
             language: lang

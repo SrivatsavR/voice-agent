@@ -21,8 +21,8 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// detect silence after 10s
-const SILENCE_FILLER_TIMEOUT_MS = 12000;
+// detect silence after 3s
+const SILENCE_FILLER_TIMEOUT_MS = 3000;
 
 /**
  * SilenceFillerManager
@@ -462,6 +462,7 @@ wss.on('connection', (ws) => {
   let silenceFiller = null;
   let currentProcessingId = 0;
   let isProcessingTranscript = false;
+  let fastMatchProcessedThisTurn = false;
 
   // Create call-scoped logger (will get streamSid and callerPhone later)
   let callLog = Logger.forCall(callId, null, null);
@@ -511,6 +512,8 @@ wss.on('connection', (ws) => {
       const onTranscript = async (transcript, audioBuffer = null) => {
         if (!transcript?.trim()) return;
         const myProcessingId = ++currentProcessingId;
+        const asrReceivedAt = performance.now();
+        callLog.withComponent('Timing').info('ASR final transcript received', { transcript_length: transcript.length });
 
         try {
           // 1. Immediately pause and reset the silence filler to prevent it firing during processing
@@ -584,6 +587,7 @@ wss.on('connection', (ws) => {
           // Pass tts and silenceFiller so the agent workflow can stream text chunks immediately and pause fillers
           const result = await callSession.processTranscript(transcript, tts, silenceFiller);
           callLog.withComponent('Workflow').timeEnd(timer);
+          callLog.withComponent('Timing').info('End-to-end pipeline', { total_ms: Math.round(performance.now() - asrReceivedAt), streamed: result.streamedByNode });
           callLog.withComponent('Workflow').debug('Processed result', { say: result.say, next_node: result.next_node, notes: result.notes });
 
 
@@ -664,16 +668,20 @@ wss.on('connection', (ws) => {
             silenceFiller?.pause();
           }
 
-          // Evaluate fast match on partial transcripts
+          // Evaluate fast match on partial transcripts — bypass waiting for Deepgram final
           if (callSession && callSession.checkFastMatch) {
-            if (callSession.checkFastMatch(partial)) {
-              callLog.withComponent('User').info(`[Fast-Match Interim] Matched: ${partial}. Forcing flush.`);
-              asr.forceFlush();
+            if (callSession.checkFastMatch(partial) && !fastMatchProcessedThisTurn) {
+              fastMatchProcessedThisTurn = true;
+              callLog.withComponent('User').info(`[Fast-Match Interim] Matched: ${partial}. Bypassing ASR final.`);
+              // Directly invoke transcript handler with the partial text
+              onTranscript(partial);
+              // Also flush ASR buffer to prevent duplicate processing when final arrives
+              asr.forceFlush?.();
             }
           }
         },
         onSpeechStarted: () => {
-          // Warmup removed to reduce ElevenLabs overhead
+          fastMatchProcessedThisTurn = false;
         }
       };
       if (ASR_PROVIDER === 'deepgram') {
