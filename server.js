@@ -668,15 +668,55 @@ wss.on('connection', (ws) => {
             silenceFiller?.pause();
           }
 
-          // Evaluate fast match on partial transcripts — bypass waiting for Deepgram final
-          if (callSession && callSession.checkFastMatch) {
-            if (callSession.checkFastMatch(partial) && !fastMatchProcessedThisTurn) {
+          // Evaluate fast match on partial transcripts — bypass waiting for Deepgram final.
+          // IMPORTANT: Call processTranscript directly instead of onTranscript to avoid
+          // the race where forceFlush triggers an ASR final that aborts our processing.
+          if (callSession && callSession.checkFastMatch && callSession.processTranscript) {
+            if (callSession.checkFastMatch(partial) && !fastMatchProcessedThisTurn && !isProcessingTranscript) {
               fastMatchProcessedThisTurn = true;
               callLog.withComponent('User').info(`[Fast-Match Interim] Matched: ${partial}. Bypassing ASR final.`);
-              // Directly invoke transcript handler with the partial text
-              onTranscript(partial);
-              // Also flush ASR buffer to prevent duplicate processing when final arrives
-              asr.forceFlush?.();
+
+              silenceFiller?.reset();
+              silenceFiller?.pause();
+              isProcessingTranscript = true;
+
+              const myProcId = ++currentProcessingId;
+              callSession.setIsActiveCallback(() => isActive && myProcId === currentProcessingId);
+
+              callSession.processTranscript(partial, tts, silenceFiller).then((result) => {
+                if (myProcId !== currentProcessingId) {
+                  callLog.withComponent('Workflow').warn('[Fast-Match Interim] Result discarded (superseded)');
+                  isProcessingTranscript = false;
+                  silenceFiller?.resume();
+                  return;
+                }
+                const { say, next_node, session, streamedByNode } = result;
+                if (say && tts && isActive) {
+                  callLog.withComponent('Agent').info(say);
+                  if (!streamedByNode) tts.sendText(say);
+                  tts.flush();
+                }
+                isProcessingTranscript = false;
+
+                if (callSession.isTerminal()) {
+                  isActive = false;
+                  const checkInterval = setInterval(() => {
+                    if (!tts.isSpeaking) {
+                      clearInterval(checkInterval);
+                      setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 5000);
+                    }
+                  }, 500);
+                } else if (!tts?.isSpeaking) {
+                  silenceFiller?.resume();
+                }
+
+                // Flush ASR buffer AFTER processing completes to avoid the race condition
+                asr?.forceFlush?.();
+              }).catch((err) => {
+                isProcessingTranscript = false;
+                callLog.withComponent('WS').error('[Fast-Match Interim] Processing error', err);
+                silenceFiller?.resume();
+              });
             }
           }
         },
@@ -748,6 +788,7 @@ wss.on('connection', (ws) => {
     }
 
     isActive = false;
+    currentProcessingId++; // Abort any in-flight processing loops
     silenceFiller?.stop();
     asr?.close();
     tts?.close();

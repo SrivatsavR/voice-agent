@@ -436,13 +436,33 @@ export function createCallSession(callerPhone = '', options = {}) {
           messages = messages.slice(sliceIdx);
         }
 
-        const sanitizedMessages = messages.map(msg => ({
-          role: msg.role,
-          content: msg.content || null,
-          tool_calls: msg.tool_calls || null,
-          tool_call_id: msg.tool_call_id || null,
-          name: msg.name || null
-        })).map(sanitizeMessage);
+        const sanitizedMessages = messages.map(msg => {
+          // Items without a 'role' are Responses API native items (function_call,
+          // function_call_output) — pass through as-is after sanitize.
+          if (!msg.role) return sanitizeMessage(msg);
+
+          switch (msg.role) {
+            case 'system':
+            case 'user':
+              return sanitizeMessage({ role: msg.role, content: msg.content || '' });
+            case 'assistant': {
+              const out = { role: 'assistant', content: msg.content || '' };
+              if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+                out.tool_calls = msg.tool_calls;
+              }
+              return sanitizeMessage(out);
+            }
+            case 'tool':
+              return sanitizeMessage({
+                role: 'tool',
+                content: msg.content || '',
+                tool_call_id: msg.tool_call_id,
+                name: msg.name
+              });
+            default:
+              return sanitizeMessage(msg);
+          }
+        });
 
         const stream = await turnRunner.run(agent, [systemMessage, ...sanitizedMessages], { stream: true });
 
@@ -491,8 +511,13 @@ export function createCallSession(callerPhone = '', options = {}) {
 
         await stream.completed;
         if (!nodeOptions.skipHistory) {
-          // Sanitize new items before storing
-          const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+          // Sanitize new items before storing.
+          // Filter out items without a 'role' field — these are Responses API internal
+          // items (function_call, function_call_output) that cannot be safely replayed
+          // as chat messages on subsequent turns.
+          const newItems = stream.newItems
+            .map(item => sanitizeMessage(item.rawItem))
+            .filter(item => item && item.role);
           conversationHistory.push(...newItems);
         }
         return stream.finalOutput;
@@ -633,6 +658,13 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function processTranscript(transcript, tts = null, silenceFiller = null) {
     currentProcessingId++;
     const currentProcId = currentProcessingId;
+
+    // Early exit if the call is no longer active (WS closed or Twilio stopped)
+    if (!isActiveCallback()) {
+      if (options.logger) options.logger.warn('[Workflow] processTranscript called after call ended — aborting');
+      return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
+    }
+
     const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|।]/g, '');
     let fastMatchResult = null;
 
@@ -1004,7 +1036,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
-        } else {
+        } else if (isActiveCallback()) {
           Object.assign(session, actual.updates);
           if (options.logger && Object.keys(actual.updates || {}).length > 0) {
             options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
@@ -1066,13 +1098,15 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
     }
 
-    if (finalLLMOutput.updates) {
+    if (finalLLMOutput.updates && isActiveCallback()) {
       Object.assign(session, finalLLMOutput.updates);
       if (options.logger && Object.keys(finalLLMOutput.updates).length > 0) {
         options.logger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
       }
     }
-    handleBackgroundTasks(finalLLMOutput);
+    if (isActiveCallback()) {
+      handleBackgroundTasks(finalLLMOutput);
+    }
 
     const prevNode = currentNode;
     const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
