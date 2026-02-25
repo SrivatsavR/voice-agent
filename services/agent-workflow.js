@@ -42,7 +42,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. If the pitch has not been delivered yet, deliver it now (14 Cr+ customers, zero commission, free logistics) and ask if they are interested — all in one message.
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. If the pitch has not been delivered yet, proceed to deliver it and ask for interest as per node instructions.
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -151,7 +151,7 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
   1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask for interest: "Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
   2. If 'pitch_delivered' is "yes" but 'interest_in_meesho' is missing: Interpret any positive response (ack) as interest confirmed. Move directly to the Name question: "Aapka poora naam kya hai?". Set 'interest_in_meesho': "yes".
   3. If Name is known but Bank Account is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?".
-- **IMPORTANT**: The pitch must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
+- **IMPORTANT**: The pitch must be delivered ONLY ONCE per call. If 'pitch_delivered' is "yes", NEVER repeat the pitch details (21 crore, zero commission, etc.).
 
 === GLOBAL EXTRACTION ===
 - You MUST capture ANY information the user provides, even if you didn't ask for it.
@@ -628,7 +628,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             // Deliver pitch + capture name in one shot
             return {
               updates: { name_spoken: name, pitch_delivered: 'yes' },
-              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
+              say: `Achha, ${name} ji. Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
               next_node: 'CONTINUE'
             };
           }
@@ -657,7 +657,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           if (session.pitch_delivered !== 'yes') {
             return {
               updates: { pitch_delivered: 'yes' },
-              say: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?",
+              say: "Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?",
               next_node: 'CONTINUE'
             };
           }
@@ -798,16 +798,35 @@ export function createCallSession(callerPhone = '', options = {}) {
       // Use session-level logger (not shadowed by processTranscript's options parameter)
       const log = sessionLogger;
 
-      // Silent background scan for tasks (removed debug log per user request)
+      let bgTaskCounter = 0;
+
+      const incrementBg = () => {
+        bgTaskCounter++;
+        if (bgTaskCounter === 1 && silenceFiller) {
+          if (log) log.withComponent('Validation').debug('[Background] Task started — pausing silence filler', { active: bgTaskCounter });
+          silenceFiller.pause();
+        }
+      };
+
+      const decrementBg = () => {
+        bgTaskCounter = Math.max(0, bgTaskCounter - 1);
+        if (bgTaskCounter === 0 && silenceFiller) {
+          if (log) log.withComponent('Validation').debug('[Background] All tasks finished — resuming silence filler');
+          // Resume only if agent isn't speaking
+          if (!tts?.isSpeaking && !tts?.hasPendingAudio()) {
+            silenceFiller.resume();
+          }
+        }
+      };
 
       // 1. Email
       if (updates.raw_email && session.bg_email_running !== 'yes') {
         session.bg_email_running = 'yes';
+        incrementBg();
         if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: 'yes' } });
         const candidate = updates.raw_email;
         Promise.resolve().then(async () => {
           try {
-            if (silenceFiller) silenceFiller.pause();
             const normRes = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
             const normData = JSON.parse(normRes);
             const norm = normData.success ? normData.data : null;
@@ -853,7 +872,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             notifyUpdate();
-            if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
+            decrementBg();
           }
         });
       }
@@ -861,10 +880,10 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 2. GST
       if (updates.raw_gstin && session.bg_gst_running !== 'yes') {
         session.bg_gst_running = 'yes';
+        incrementBg();
         const candidate = updates.raw_gstin;
         Promise.resolve().then(async () => {
           try {
-            if (silenceFiller) silenceFiller.pause();
             // Removal of GST Validation as per user request (GST TRUST RULE)
             const normalized = candidate.replace(/\s+/g, '').toUpperCase();
             session.gstin = normalized;
@@ -889,7 +908,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               delete session.raw_gstin;
             }
             notifyUpdate();
-            if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
+            decrementBg();
           }
         });
       }
@@ -897,6 +916,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 3. Listing Date Normalization
       if (updates.raw_listing_start && session.bg_listing_running !== 'yes') {
         session.bg_listing_running = 'yes';
+        incrementBg();
         if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: 'yes', raw_listing_start: updates.raw_listing_start } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
@@ -932,6 +952,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             notifyUpdate();
+            decrementBg();
           }
         });
       }
@@ -939,6 +960,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && session.bg_price_running !== 'yes') {
         session.bg_price_running = 'yes';
+        incrementBg();
         if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: 'yes', raw_price_min: updates.raw_price_min, raw_price_max: updates.raw_price_max } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
@@ -986,6 +1008,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             notifyUpdate();
+            decrementBg();
           }
         });
       }
@@ -994,6 +1017,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.kb_query) {
         const query = updates.kb_query;
         session.kb_search_active = true; // Mark search as active
+        incrementBg();
         if (log) log.withComponent('KnowledgeBase').info(`Search initiated for: "${query}"`);
         delete updates.kb_query;
         delete session.kb_query; // Clear from session to prevent loops
@@ -1001,7 +1025,6 @@ export function createCallSession(callerPhone = '', options = {}) {
           // VOICE: Fire background transition and recursive turn
           Promise.resolve().then(async () => {
             try {
-              if (silenceFiller) silenceFiller.pause();
               const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
               // Extract clean text from KB result JSON
               let kbText = kbRaw;
@@ -1028,7 +1051,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.kb_search_active = false;
               notifyUpdate();
             } finally {
-              if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
+              decrementBg();
             }
           });
         }
@@ -1050,6 +1073,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             // Instant UI broadcast for Fast-Match updates
             if (fastMatchResult.updates) {
               sessionLogger.withComponent('Database').info('Saving session updates', { updates: fastMatchResult.updates });
+              // APPLY UPDATES TO SESSION
+              Object.assign(session, fastMatchResult.updates);
+              notifyUpdate();
             }
           }
           if (tts && isActiveCallback()) {
@@ -1249,35 +1275,129 @@ export function createCallSession(callerPhone = '', options = {}) {
     const finalLLMOutput = await llmPromise;
     if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: false };
 
-    // Chat-specific RAG Handling: If KB query is requested and we are in chat mode (no tts),
-    // wait for the result and perform the recursive turn synchronously so the user gets the final answer.
-    if (!tts && finalLLMOutput.updates?.kb_query) {
-      const query = finalLLMOutput.updates.kb_query;
-      if (sessionLogger) sessionLogger.info(`[Chat-RAG] Sync-handling query: ${query}`);
+    // --- Chat-specific Synchronous Task Handling ---
+    // If we are in chat mode (no tts), we perform all validation and search tasks 
+    // synchronously so the user gets the final response in one turn.
+    if (!tts && finalLLMOutput.updates && Object.keys(finalLLMOutput.updates).length > 0) {
+      const updates = finalLLMOutput.updates;
+      let systemPrompts = [];
+      let anySyncTask = false;
 
-      // CRITICAL: Save current turn updates BEFORE recursing, otherwise they are lost
-      Object.assign(session, finalLLMOutput.updates);
-      const prevNode = currentNode;
-      currentNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
-      if (currentNode !== prevNode) markNodeDone(prevNode);
+      // 1. Knowledge Base Search
+      if (updates.kb_query) {
+        anySyncTask = true;
+        const query = updates.kb_query;
+        if (sessionLogger) sessionLogger.info(`[Chat-RAG] Sync-handling KB query: ${query}`);
 
-      try {
-        const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
-        // Extract clean text from KB result JSON
-        let kbText = kbRaw;
+        session.kb_search_active = true;
         try {
-          const parsed = JSON.parse(kbRaw);
-          kbText = parsed.data || kbRaw;
-        } catch (e) { /* use raw if not JSON */ }
-        // Perform recursive turn synchronously, marking as recursive to maintain ID
-        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, null, null, {}, true);
-        if (sessionLogger) sessionLogger.info(`[Chat-RAG] Recursive turn results: ${recursiveResult.say.substring(0, 50)}...`);
-        // Important: merge recursive results back to session if they aren't already
+          const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
+          let kbText = kbRaw;
+          try {
+            const parsed = JSON.parse(kbRaw);
+            kbText = parsed.data || kbRaw;
+          } catch (e) { }
+          systemPrompts.push(`Knowledge Base Results: ${kbText}`);
+        } catch (err) {
+          if (sessionLogger) sessionLogger.error('[Chat-Sync] KB search failed', err);
+        } finally {
+          session.kb_search_active = false;
+          delete updates.kb_query;
+          delete session.kb_query;
+        }
+      }
+
+      // 2. Email Validation
+      if (updates.raw_email) {
+        anySyncTask = true;
+        const candidate = updates.raw_email;
+        if (sessionLogger) sessionLogger.info(`[Chat-Sync] Sync-validating email: ${candidate}`);
+        try {
+          const normRes = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+          const normData = JSON.parse(normRes);
+          const norm = normData.success ? normData.data : null;
+          if (norm && norm.normalized_email) {
+            const valRes = await runTool(validateEmailTool, { email: norm.normalized_email });
+            const valData = JSON.parse(valRes);
+            if (valData.success && valData.data.valid) {
+              session.email = valData.data.normalized;
+              session.email_valid = 'yes';
+              delete updates.raw_email;
+              delete session.raw_email;
+              systemPrompts.push(`Email verified successfully as ${session.email}. Proceed to next field.`);
+            } else {
+              session.email_valid = 'no';
+              session.email_attempts = (session.email_attempts || 0) + 1;
+              systemPrompts.push(`Email "${norm.normalized_email}" is invalid (${valData.data?.error || "format error"}). Politely ask the user to repeat.`);
+            }
+          }
+        } catch (e) { }
+      }
+
+      // 3. GST Capture
+      if (updates.raw_gstin) {
+        anySyncTask = true;
+        const candidate = updates.raw_gstin.replace(/\s+/g, '').toUpperCase();
+        if (sessionLogger) sessionLogger.info(`[Chat-Sync] Sync-capturing GST: ${candidate}`);
+        session.gstin = candidate;
+        session.gstin_valid = 'yes';
+        delete updates.raw_gstin;
+        delete session.raw_gstin;
+        systemPrompts.push(`GST captured successfully as ${candidate}. Proceed to closure.`);
+      }
+
+      // 4. Listing Date Normalization
+      if (updates.raw_listing_start) {
+        anySyncTask = true;
+        const candidate = updates.raw_listing_start;
+        try {
+          const rawResponse = await runTool(normalizeListingDateTool, {
+            spoken_date: candidate,
+            current_date_iso: new Date().toISOString().split('T')[0]
+          });
+          const response = JSON.parse(rawResponse);
+          if (response.success && response.data.valid) {
+            session.listing_start = response.data.normalized;
+            systemPrompts.push(`Listing date normalized to ${session.listing_start}.`);
+          }
+        } catch (e) { }
+      }
+
+      // 5. Price Range Validation
+      if (updates.raw_price_min || updates.raw_price_max) {
+        anySyncTask = true;
+        const pMin = parseFloat(updates.raw_price_min || session.price_min || 0);
+        const pMax = parseFloat(updates.raw_price_max || session.price_max || 0);
+        if (!isNaN(pMin) && !isNaN(pMax)) {
+          try {
+            const resRaw = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
+            const resData = JSON.parse(resRaw);
+            if (resData.success && resData.data.valid) {
+              session.price_min = resData.data.price_min;
+              session.price_max = resData.data.price_max;
+              delete updates.raw_price_min;
+              delete updates.raw_price_max;
+              delete session.raw_price_min;
+              delete session.raw_price_max;
+              systemPrompts.push(`Price range validated to ₹${session.price_min}-₹${session.price_max}.`);
+            }
+          } catch (e) { }
+        }
+      }
+
+      if (anySyncTask) {
+        // Apply remaining updates and transition state BEFORE recursive call
+        Object.assign(session, updates);
+        const prevNode = currentNode;
+        currentNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+        if (currentNode !== prevNode) markNodeDone(prevNode);
+
+        const combinedMsg = `[SYSTEM: ${systemPrompts.join(' ')}]`;
+        if (sessionLogger) sessionLogger.info(`[Chat-Sync] Executing recursive turn with msg: ${combinedMsg.substring(0, 100)}...`);
+
+        const recursiveResult = await processTranscript(combinedMsg, null, null, {}, true);
         Object.assign(session, recursiveResult.session);
         return recursiveResult;
-      } catch (err) {
-        if (sessionLogger) sessionLogger.error('[Chat-RAG] Sync KB query failed', err);
-        // Fallback to the acknowledgment "Main check karke batati hoon"
       }
     }
 
@@ -1319,6 +1439,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     checkFastMatch,
     updateSession,
     getCurrentNode: () => currentNode,
+    getBgTasksRunning: () => bgTaskCounter > 0,
     getSession: () => ({ ...session, transcript: conversationHistory }),
     isTerminal: () => TERMINAL_NODES.has(currentNode),
   };

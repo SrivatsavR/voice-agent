@@ -648,12 +648,19 @@ wss.on('connection', (ws) => {
             // Just trigger a flush to terminate the generation.
             tts.flush();
 
-            // --- Smart Language Switch (Phase 3) ---
-            // If we just entered Node 4, switch the ASR to multilingual for better Q&A support.
-            // We do this after the bridge TTS starts to hide the reconnection latency.
-            if (next_node === 'NODE_4_CLOSURE' && asr && asr.options.language !== 'multi') {
-              callLog.withComponent('ASR').info('🚀 Entering QnA Phase — switching ASR to Multilingual mode');
-              asr.setLanguage('multi');
+            // --- Smart ASR Parameter Updates (Phase 3 improvements) ---
+            // If we are in or entering the Email/GST phase (NODE 3) or QnA phase (NODE 4), 
+            // increase patient listening parameters.
+            if (next_node === 'NODE_3_CONTACT_GST') {
+              callLog.withComponent('ASR').info('🛡️ Entering Email/GST Phase — increasing ASR patience');
+              asr.updateOptions({ endpointing: '1000', utterance_end_ms: '1500' });
+            } else if (next_node === 'NODE_4_CLOSURE') {
+              const lang = (asr && asr.options.language !== 'multi') ? 'multi' : asr.options.language;
+              callLog.withComponent('ASR').info('🚀 Entering QnA Phase — switching to Multilingual and high patience');
+              asr.updateOptions({ language: lang, endpointing: '1500', utterance_end_ms: '2000' });
+            } else if (asr) {
+              // Reset to defaults for other nodes
+              asr.updateOptions({ endpointing: '500', utterance_end_ms: '1000' });
             }
           }
           isProcessingTranscript = false;
@@ -687,8 +694,8 @@ wss.on('connection', (ws) => {
             closeAfterSpeaking();
           } else {
             // Processing done, not terminal: Resume silence filler for next gap
-            // ONLY if the agent isn't currently speaking or about to speak
-            if (!tts?.isSpeaking && !tts?.hasPendingAudio()) {
+            // ONLY if the agent isn't currently speaking AND no background tasks are running
+            if (!tts?.isSpeaking && !tts?.hasPendingAudio() && !callSession.getBgTasksRunning()) {
               silenceFiller?.resume();
             }
           }

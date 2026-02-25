@@ -23,15 +23,18 @@ export class DeepgramASR {
         process.nextTick(() => this._connect());
     }
 
-    setLanguage(lang) {
-        if (this.options.language === lang) return;
-        this._log.info(`🌐 Switching ASR language to: ${lang}`);
-        this.options.language = lang;
-        // Reconnect to apply new language
-        if (this.ws) {
-            this.ws.close(1000, 'language_switch');
+    updateOptions(newOptions) {
+        this.options = { ...this.options, ...newOptions };
+        this._log.info('⚙️ Updating ASR options', newOptions);
+        // Only reconnect if critical parameters changed
+        if (newOptions.language) {
+            this._log.info(`🌐 Language changed to: ${this.options.language} — reconnecting`);
+            if (this.ws) this.ws.close(1000, 'language_switch');
         }
-        // _connect will be called by close handler if not explicit closed
+    }
+
+    setLanguage(lang) {
+        this.updateOptions({ language: lang });
     }
 
     _connect() {
@@ -54,8 +57,8 @@ export class DeepgramASR {
             channels: '1',
             punctuate: 'false',
             interim_results: 'true',
-            endpointing: '300',
-            utterance_end_ms: '1000',
+            endpointing: this.options.endpointing || '500',
+            utterance_end_ms: this.options.utterance_end_ms || '1000',
             vad_events: 'true',
             smart_format: 'false',
             language: lang

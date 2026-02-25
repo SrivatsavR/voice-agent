@@ -1,62 +1,65 @@
 graph TD
-    subgraph "External Providers"
-        Twilio[Twilio Stream & REST API]
-        DeepgramASR[Deepgram Streaming ASR]
-        DeepgramREST[Deepgram REST API]
-        ElevenLabs[ElevenLabs TTS]
-        OpenAI[OpenAI gpt-4o-mini]
-        Pinecone[Pinecone Vector DB]
+    %% Component Styles
+    classDef External fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#333;
+    classDef Core fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#01579b;
+    classDef State fill:#fff9c4,stroke:#fbc02d,stroke-width:2px,color:#fbc02d;
+    classDef UI fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#7b1fa2;
+
+    subgraph ExternalProvider ["External Infrastructure"]
+        Twilio["Twilio (Telephony)"]:::External
+        DeepgramASR["Deepgram Streaming (ASR)"]:::External
+        DeepgramREST["Deepgram REST (Burst ASR)"]:::External
+        ElevenLabs["ElevenLabs (TTS)"]:::External
+        OpenAI["OpenAI (LLM / RAG)"]:::External
+        Pinecone["Pinecone (Vector DB)"]:::External
     end
 
-    subgraph "Voice Server (Node.js)"
-        Server[server.js]
-        Session[Call Session Manager]
-        Workflow[agent-workflow.js]
-        Filler[SilenceFillerManager]
-        Interruption[InterruptionManager]
-        KB[Vector Search Service]
+    subgraph NodeServer ["Core Voice Node.js Server"]
+        Server["server.js (Event Hub)"]:::Core
+        Session["Call Session Manager"]:::State
+        Workflow["agent-workflow.js (Logic)"]:::Core
+        
+        subgraph InternalUtils ["Internal Utilities"]
+            Filler["SilenceFillerManager"]:::Core
+            Interruption["InterruptionManager"]:::Core
+        end
+        
+        KB["Vector Search Service"]:::Core
     end
 
-    subgraph "Client Dashboard"
-        UI[Web Console]
-        SSE[SSE Live Events Feed]
+    subgraph ClientLayer ["Client Dashboard"]
+        Dashboard["Web Console (Admin Dashboard)"]:::UI
+        SSE["SSE Event Pipeline"]:::UI
     end
 
-    %% Call Lifecycle
-    Twilio -- "1. Incoming Call (CallSid)" --> Server
-    Server -- "2. Media Stream (mulaw)" --> DeepgramASR
-    DeepgramASR -- "3. Multilingual Transcript" --> Server
+    %% Call Lifecycle & Telephony
+    Twilio <--> |"Media Stream & Signaling"| Server
+    Server <--> |"Real-time Transcript & Media"| DeepgramASR
     
-    %% Intelligence Flow
-    Server -- "4. Transcript + Session State" --> Workflow
-    Workflow -- "5. RAG Query (if needed)" --> KB
-    KB -- "6. Vector Search" --> Pinecone
-    Pinecone -- "7. Relevant Chunks" --> KB
-    KB -- "8. Context" --> Workflow
-    Workflow -- "9. Prompt + Guardrails" --> OpenAI
-    OpenAI -- "10. JSON Extraction & Reply" --> Workflow
-    
-    %% Burst Correction (Phase 2)
-    Server -- "11. Alphanumeric Burst (Node 3)" --> DeepgramREST
-    DeepgramREST -- "12. English Alphanumeric Correction" --> Server
-    
-    %% Response Delivery
-    Workflow -- "13. Say Phrase" --> Server
-    Server -- "14. Text-to-Speech" --> ElevenLabs
-    ElevenLabs -- "15. Audio Buffer" --> Server
-    Server -- "16. Media Stream" --> Twilio
-    
-    %% Termination (Phase 2)
-    Server -- "17. TERMINAL reached → REST Hangup" --> Twilio
+    %% Session & State Tracking
+    Server -- "Update State" --> Session
+    Workflow <--> |"State (Read/Write)"| Session
 
-    %% UI Sync
-    Server -- "Real-time Variable Updates" --> SSE
-    Server -- "Background Validation Logs" --> SSE
-    SSE -- "Live Feed" --> UI
-    UI -- "Outbound/Chat Control" --> Server
+    %% Intelligence & RAG Flow
+    Server <--> |"Audio & Response Processing"| Workflow
+    Workflow <--> |"RAG Inquiry & Context"| KB
+    KB <--> |"Search & Metadata"| Pinecone
+    Workflow <--> |"Reasoning & Extraction"| OpenAI
+    
+    %% Burst Validation (Phase 2 Upgrade)
+    Server <--> |"High-Precision Transcription"| DeepgramREST
+    
+    %% Audio Synthesis
+    Workflow -- "Contextual Metadata" --> Server
+    Server <--> |"Voice Stream & Audio Buffer"| ElevenLabs
+    Server -- "16. Audio Playback [WebSocket]" --> Twilio
+    
+    %% Lifecycle Controls
+    Server -- "REST Hangup [HTTP]" --> Twilio
+    Server <--> |"Silence Detection & Fillers"| Filler
+    Server <--> |"Barge-in Logic"| Interruption
+    Interruption -- "Flush AudioBuffer" --> ElevenLabs
 
-    %% Guardrails
-    Server -- "Mutual Silence Monitoring" --> Filler
-    Filler -- "Acknowledge/Re-engage" --> Server
-    Server -- "Barge-in Logic" --> Interruption
-    Interruption -- "Mute Agent" --> ElevenLabs
+    %% Observability
+    Server <--> SSE <--> Dashboard
+    Dashboard -- "Outbound Trigger [HTTP]" --> Server

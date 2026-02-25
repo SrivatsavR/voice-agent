@@ -305,7 +305,18 @@ async function refreshHistory() {
                     if (role && entry.content) {
                         let txt = typeof entry.content === 'string' ? entry.content : (Array.isArray(entry.content) ? entry.content.map(c => c.text || '').join('') : '');
                         if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
-                        if (txt && !txt.startsWith('{"say"')) { // Filter out raw JSON if any
+
+                        // FIX: Filter out raw JSON OR parse it if it contains "say"
+                        if (txt.startsWith('{') && txt.includes('"say"')) {
+                            try {
+                                const parsed = JSON.parse(txt);
+                                txt = parsed.say || null;
+                            } catch (e) { txt = null; }
+                        } else if (txt.startsWith('{')) {
+                            txt = null; // discard other technical JSON items
+                        }
+
+                        if (txt) {
                             addMessage(role, txt);
                         }
                     }
@@ -357,8 +368,18 @@ function addMessage(role, text) {
         'system': 'bg-red-50 border-red-100 text-red-600 italic rounded-lg text-[11px]'
     };
 
-    const safeText = escapeHtml(text);
     const safeRole = escapeHtml(role);
+
+    // FIX: Double-check if text is JSON string (e.g. from history backfill or logs)
+    let displayPuff = text;
+    if (displayPuff.startsWith('{') && displayPuff.includes('"say"')) {
+        try {
+            const parsed = JSON.parse(displayPuff);
+            displayPuff = parsed.say || displayPuff;
+        } catch (e) { }
+    }
+
+    const safeText = escapeHtml(displayPuff);
 
     div.innerHTML = `
         <div class="px-5 py-3 border backdrop-blur-sm max-w-[85%] ${bubbleClasses[role]} shadow-sm">
