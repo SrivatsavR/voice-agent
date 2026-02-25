@@ -28,6 +28,13 @@ You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You r
 - **ENDING RULE**: EVERY response ("say" field) MUST end with exactly ONE clear question. NEVER leave a response open-ended.
 - **LANGUAGE SWITCHING**: Match the user. If they use English, you use English. If they use simple Hindi, you do the same.
 
+=== KNOWLEDGE BASE QUERIES ===
+- If the user asks a question about Meesho (e.g., benefits, commission, registration help, "How to list?"):
+  - You MUST set 'kb_query' in your 'updates_json' to the user's specific question.
+  - Your 'say' should be: "Zaroor, main check karke batati hoon."
+  - The system will provide the answer in the next turn as "[SYSTEM: Knowledge Base Results: ...]".
+  - When you receive results, explain them simply in Hindi and ask: "Kya aapko kuch aur jaanna hai?"
+
 === SPEECH-TO-TEXT AWARENESS ===
 ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on intent.
 
@@ -132,7 +139,7 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'pitch_delivered' is false or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap interested hain?" Set 'pitch_delivered': true. Do NOT pitch again after this.
+  1. If 'pitch_delivered' is false or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?" Set 'pitch_delivered': true. Do NOT pitch again after this.
   2. If 'interest_in_meesho' is "yes" but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If Name is known but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 - **IMPORTANT**: The pitch (14 Cr+ customers, zero commission, free logistics) must be delivered ONLY ONCE. If 'pitch_delivered' is true, NEVER repeat the pitch.
@@ -232,7 +239,8 @@ const closureAgent = new Agent({
   - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-    - NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
+- If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. Explain it naturally in Hindi.
+- NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
 - Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
 - Ensure the final closing phrase is warm and complete before exiting.`,
   model: "gpt-4o-mini",
@@ -540,7 +548,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
     const text = "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
-    conversationHistory.push(sanitizeMessage({ role: 'assistant', content: text }));
+    // Do NOT push to history here to avoid the LLM thinking it already spoke if it recurses
     return text;
   }
 
@@ -556,7 +564,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             // Name given before pitch — capture name, deliver combined pitch+interest question
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap interested hain?`,
+              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
               next_node: 'CONTINUE'
             };
           }
@@ -564,7 +572,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             // Pitch delivered but interest not yet captured — ask interest
             return {
               updates: { name_spoken: name },
-              say: `Achha, ${name} ji. Kya aap Meesho par selling mein interested hain?`,
+              say: `Achha, ${name} ji. Kya aap Meesho par apne items bechna chahte hai?`,
               next_node: 'CONTINUE'
             };
           }
@@ -580,10 +588,21 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
           if (!session) return null;
+          if (!session.pitch_delivered) {
+            return {
+              updates: { pitch_delivered: true },
+              say: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?",
+              next_node: 'CONTINUE'
+            };
+          }
           if (!session.interest_in_meesho) {
-            // Let the LLM handle "haanji" etc. at node start to ensure pitch is delivered
-            return null;
-          } else if (session.name_spoken && !session.has_bank_account) {
+            return {
+              updates: { interest_in_meesho: 'yes' },
+              say: session.name_spoken ? "Achha, toh bank account hai?" : "Aapka poora naam kya hai?",
+              next_node: 'CONTINUE'
+            };
+          }
+          else if (session.name_spoken && !session.has_bank_account) {
             return {
               updates: { has_bank_account: 'yes' },
               say: "Achha, toh bank account hai. Aap kis tarah ke items bechte hain?",
@@ -895,9 +914,13 @@ export function createCallSession(callerPhone = '', options = {}) {
                 const parsed = JSON.parse(kbRaw);
                 kbText = parsed.data || kbRaw;
               } catch (e) { /* use raw if not JSON */ }
+              if (sessionLogger) sessionLogger.withComponent('KnowledgeBase').info(`[Background] KB Results found for: "${query}"`, { info_length: kbText.length });
+
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                if (log) log.withComponent('KnowledgeBase').info(`Answer Found for: ${query}`);
-                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller);
+                // Pass true for isRecursive to maintain logical turn ID and session flow
+                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller, {}, true);
+              } else if (sessionLogger) {
+                sessionLogger.warn(`[Workflow] Stale KB result for: "${query}" (expected ProcId ${currentProcId}, but current is ${currentProcessingId})`);
               }
             } catch (e) {
               if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
@@ -931,9 +954,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     const agent = NODE_AGENTS[currentNode];
     if (!agent) {
       if (TERMINAL_NODES.has(currentNode)) {
-        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session, call_outcome: 'completed' } };
+        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session, call_outcome: 'complete' } };
       }
-      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session, call_outcome: 'completed' } };
+      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session, call_outcome: 'complete' } };
     }
 
     let userMessage = transcript;
@@ -1095,7 +1118,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           'TERM_WRONG_PERSON': 'wrong_person',
           'TERM_NO_REGISTRATION': 'no_registration'
         };
-        session.call_outcome = outcomeMap[currentNode] || 'completed';
+        session.call_outcome = outcomeMap[currentNode] || 'complete';
       }
 
       return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
@@ -1126,7 +1149,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           kbText = parsed.data || kbRaw;
         } catch (e) { /* use raw if not JSON */ }
         // Perform recursive turn synchronously, marking as recursive to maintain ID
-        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, null, null, {}, true);
+        if (sessionLogger) sessionLogger.info(`[Chat-RAG] Recursive turn results: ${recursiveResult.say.substring(0, 50)}...`);
         // Important: merge recursive results back to session if they aren't already
         Object.assign(session, recursiveResult.session);
         return recursiveResult;

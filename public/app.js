@@ -119,7 +119,7 @@ function handleLogEntry(entry) {
         msg.includes('[FastMatch]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]') ||
         lowMsg.includes('barge-in') || lowMsg.includes('silence filler') || lowMsg.includes('firing silence') || msg.includes('[Chat-RAG]') ||
         lowMsg.includes('captured') || lowMsg.includes('validated') || lowMsg.includes('searching') || lowMsg.includes('retrieved') ||
-        lowMsg.includes('answer found') || lowMsg.includes('kb query');
+        lowMsg.includes('answer found') || lowMsg.includes('kb query') || lowMsg.includes('pitch') || lowMsg.includes('interest');
 
     if (isIntelligence) {
 
@@ -360,7 +360,7 @@ function updateVariables(session) {
         { key: 'price_min', label: 'Price Range', icon: 'tag', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : null) },
         { key: 'listing_start', label: 'Ready to List?', icon: 'calendar' },
         { key: 'email', label: 'Email Address', icon: 'mail' },
-        { key: 'gstin', label: 'GST Number', icon: 'shield-check' }
+        { key: 'gstin', label: 'GST/UIN', icon: 'shield-check' }
     ];
 
     sessionVariables.innerHTML = '';
@@ -380,6 +380,7 @@ function updateVariables(session) {
         if (target.key === 'price_min' && session.bg_price_running) isSyncing = true;
 
         const div = document.createElement('div');
+        // Remove captured highlight; use neutral opacity when not captured
         div.className = `variable-card col-span-1 p-2 rounded-xl flex items-center gap-2 group ${isCaptured ? 'captured' : 'opacity-40'}`;
 
         let displayVal = isSyncing ? 'Syncing...' : '--';
@@ -389,15 +390,15 @@ function updateVariables(session) {
         }
 
         div.innerHTML = `
-            <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-600' : (isSyncing ? 'bg-pink-500/20 text-pink-500' : 'bg-slate-200 text-slate-400')} shrink-0 relative">
-                <i data-lucide="${target.icon}" class="w-3 h-3"></i>
-                ${isSyncing ? '<div class="absolute -top-1 -right-1 syncing-dot"></div>' : ''}
-            </div>
-            <div class="min-w-0">
-                <div class="text-[8px] uppercase font-bold text-slate-400 truncate">${target.label}</div>
-                <div class="text-[10px] font-bold ${isCaptured ? 'text-slate-800' : (isSyncing ? 'text-pink-500 animate-pulse' : 'text-slate-300')} truncate">${displayVal}</div>
-            </div>
-        `;
+                <div class="p-1.5 rounded-lg ${isCaptured ? 'bg-emerald-500/20 text-emerald-600' : (isSyncing ? 'bg-pink-500/20 text-pink-500' : 'bg-slate-200 text-slate-400')} shrink-0 relative">
+                    <i data-lucide="${target.icon}" class="w-3 h-3"></i>
+                    ${isSyncing ? '<div class="absolute -top-1 -right-1 syncing-dot"></div>' : ''}
+                </div>
+                <div class="min-w-0">
+                    <div class="text-[8px] uppercase font-bold text-slate-400 truncate">${target.label}</div>
+                    <div class="text-[10px] font-bold ${isCaptured ? 'text-slate-800' : (isSyncing ? 'text-pink-500 animate-pulse' : 'text-slate-300')} truncate">${displayVal}</div>
+                </div>
+            `;
         sessionVariables.appendChild(div);
     });
 
