@@ -35,7 +35,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", "Haanji", etc. at the start of the call, they are just acknowledging they are listening. DO NOT assume they are interested. You MUST still deliver the full pitch ("Meesho par fourteen crore...") before asking if they want to sell.
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says " Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -43,11 +43,8 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - **CHECK CONTEXT**: Check [SYSTEM: Current session variables] before every response. Do NOT ask for information that is already present.
 - **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates_json" object immediately and acknowledge it naturally.
 - **CRISP HINDI**: Use short, direct questions. Avoid "Aapka", "Jaan sakte hain", etc. if not needed.
-  - "Aapka poora naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
+  - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
-
-=== TOOL CALLING RULE ===
-If you need to use a tool (like searchKnowledgeBaseTool), you MUST do so by returning a structured tool call. OpenAI requires that the assistant turn requesting the tool is followed by the tool result. DO NOT output plain text when a tool is required.
 
 === DATA TYPES FOR UPDATES_JSON ===
 - 'email_valid', 'gstin_valid', 'pitch_delivered', 'summary_confirmed': **BOOLEAN** (true/false), NOT strings.
@@ -55,22 +52,16 @@ If you need to use a tool (like searchKnowledgeBaseTool), you MUST do so by retu
 - 'products_sold': **ARRAY** of strings.
 - 'interest_in_meesho': "yes" or "no".
 
-=== RESPONSE FORMAT (MANDATORY) ===
-You MUST respond with ONLY a JSON object. No markdown, no explanation, no preamble.
-The JSON MUST have exactly these 4 keys in this exact order:
+=== RESPONSE FORMAT ===
+Strictly return JSON.
 {
   "say": "Short crisp Hindi/Hinglish question?",
   "updates_json": "{\"key\": \"value\"}",
   "next_node": "TARGET_NODE_NAME",
   "notes": "1-word status"
 }
-RULES:
-- "say" MUST be the FIRST key in the JSON.
-- Do NOT wrap in markdown code fences.
-- Do NOT include any text before or after the JSON.
-- "updates_json" must be a JSON string (escaped), not a raw object.
-- "next_node" must be a valid node name or "CONTINUE".
-- "notes" must be exactly one word.
+- "say" field MUST be the first key.
+- Keep "notes" to exactly one word.
 - Capture updates only for MISSING data.
 `;
 
@@ -118,12 +109,7 @@ Refer to the current session data provided to see what is already captured.
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
 
 ── 7. HANDLING QUESTIONS ──
-If the caller/user asks a question about Meesho (benefits, commission, shipping, T&C, etc.), you MUST follow this protocol:
-- If you DON'T see [SYSTEM: Knowledge Base Results] in the history: Set 'kb_query' in your 'updates_json' to the question and say exactly "Zaroor, main check karke batati hoon."
-- If you DO see [SYSTEM: Knowledge Base Results] in the latest user message: Synthesize a friendly, crisp answer in simple Hindi/Hinglish using ONLY that provided context. 
-- PROMPT PRIORITY: Answering the user's question from KB results is higher priority than asking for their name/items.
-- ALWAYS end every answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-- NEVER use your own training data for facts about Meesho if they contradict the KB results.
+If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -146,8 +132,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?".
-     - **CRITICAL**: Deliver this FULL pitch even if the user just says "Hi", "Hello", or "Haanji" in their first response. Do NOT set interest_in_meesho until they confirm after hearing the pitch.
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -155,9 +140,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | Intent | Signal | Action |
 |--------|--------|--------|
 | GIVING_NAME | user provides name | Update 'name_spoken'. |
-| INTERESTED | "yes", "theek hai", "haan", "sure", "bechna chahta hoon" | Set interest_in_meesho: "yes". |
-| ACKNOWLEDGEMENT | "haanji", "ji", "bataiye" (before pitch) | Treat as "Hi". Do NOT set interest_in_meesho. Deliver Pitch. |
-| NOT INTERESTED | "no", "nahi", "not interested" | Set interest_in_meesho: "no", next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
+| INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
+| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
 
@@ -165,9 +149,9 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho', 'name_spoken', AND 'has_bank_account' are fully captured.
 - Once all are captured, set next_node: NODE_2_DETAILS and your 'say' field MUST contain the first question of Node 2: "Aap kis tarah ke items bechte hain?"
 - Every 'say' MUST end with a question mark.`,
-  model: "gpt-4.1-nano",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: []
 });
 
 // ─── NODE 2: Business Details ─────────────────────────────────────────────────
@@ -180,7 +164,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?". If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
 3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
-   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said. NEVER attempt to guess or set 'listing_start' directly; the system will normalize it from 'raw_listing_start'.
+   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
@@ -190,47 +174,39 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 === ROUTING ===
 - Stay in NODE_2_DETAILS until all questions are answered ('products_sold', 'price_min'/'raw_price_min', and 'listing_start'/'raw_listing_start' are collected).
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
-  model: "gpt-4.1-nano",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: [validatePriceRangeTool, normalizeListingDateTool]
 });
 
 // ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
-Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already gave it, skip.
+Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
-2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
-   - Ask: "Kya aapke paas GST number hai? Agar nahi hai toh aap Enrollment ID or UIN bhi de sakte hain."
-
-=== GST TRUST RULE ===
-- NEVER reject or validate the GST number format yourself. 
-- If the user provides any alphanumeric string for GST, capture it as 'raw_gstin' in your 'updates_json' immediately.
-- Do NOT ask the user to repeat the GST or tell them it looks "invalid". Trust whatever they say.
-
-3. **TRANSITION PROTOCOL**: Once Email and (GST OR UIN) are captured, you MUST move to NODE_4_CLOSURE. 
+1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
+2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
+3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | User provides email | Set 'raw_email'. |
-| GIVING_GST | User provides 15-char GST | Set 'raw_gstin', move to NODE_4_CLOSURE. |
-| HAS_GST | "Yes", "I have it" | Ask "Aapka GST number bataye?". |
-| NO_GST | "No", "Don't have it" | Set 'gst_declined': true, ask for Enrollment ID. |
-| GIVING_UIN | User provides Enrollment ID/UIN | Set 'uin', move to NODE_4_CLOSURE. |
+| GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
+| HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
+| GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
+| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
+| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
+| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
-=== RULES ===
-- If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
-- Do NOT repeat questions if data is in system context.
+=== ROUTING ===
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- **NEVER use terminal nodes** (TERM_*) from this node. Always route to NODE_4_CLOSURE for the final wrap-up.
-- Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with the bridge: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
-  model: "gpt-4.1-nano",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+- Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
+- Every 'say' MUST end with a question mark.`,
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: []
 });
 
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
@@ -240,26 +216,22 @@ const closureAgent = new Agent({
 Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
 
 === FLOW ===
-1. **Initial Closing**: If 'closure_bridge_delivered' is not true, inform the user about the WhatsApp link FIRST.
-   Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-   Set 'closure_bridge_delivered': true in 'updates_json'.
-2. **Handle Questions**:
-   - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Main check karke batati hoon."
-   - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
-   - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi", "bas"):
+1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
+   Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
+   - Reply with: "Zaroor, main check karke batati hoon." 
+   - Wait for the system to provide the Knowledge Base info in the next turn.
+3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"), or if you have just answered their questions and they are satisfied:
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
 
-=== CRITICAL TERMINATION GUARDS ===
-- **DO NOT** use TERM_COMPLETE if the user says "theek hai", "okay", "ji", or "hmm". These are continuations. Instead, ask: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
-- **DO NOT** use TERM_COMPLETE until you have explicitly asked "Kya aap Meesho ke baare mein kuch aur jaanna hai?" and received a clear negative response.
-- NEVER ask if the user is interested in Meesho again.
-- DO NOT repeat the onboarding pitch.
-- Ensure every 'say' ends with a question, except for the final goodbye.`,
-  model: "gpt-4.1-nano",
-  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true },
-  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
+=== RULES ===
+- NEVER end the call immediately after taking details. Always ask "Kya aapko kuch aur jaanna hai?".
+- Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
+- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
+  model: "gpt-4o-mini",
+  modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
+  tools: []
 });
 
 // ─── Routing Map ──────────────────────────────────────────────────────────────
