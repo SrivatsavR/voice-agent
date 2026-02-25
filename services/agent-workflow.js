@@ -318,11 +318,13 @@ function sanitizeMessage(msg) {
     // This ensures compatibility with the plain OpenAI API expectations.
     const sanitized = JSON.parse(JSON.stringify(msg));
 
-    // Ensure 'content' is in a format OpenAI likes if it's an assistant message
+    // Ensure 'content' is in a format the Agents SDK can replay.
+    // The Responses API uses 'output_text' for assistant messages — keep that intact
+    // so getOutputMessageContent() in @openai/agents-openai can recognize it.
     if (sanitized.role === 'assistant' && Array.isArray(sanitized.content)) {
       sanitized.content = sanitized.content.map(part => {
-        if (part.type === 'output_text') return { ...part, type: 'text' };
-        if (part.type === 'text') return part;
+        if (part.type === 'output_text') return part;          // keep as-is for SDK
+        if (part.type === 'text') return { ...part, type: 'output_text' }; // fix legacy → SDK format
         return part;
       });
     }
@@ -456,9 +458,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               return sanitizeMessage({ role: msg.role, content: msg.content || '' });
             case 'assistant': {
               let content = msg.content || '';
-              // OpenAI PROVIDER BUGFIX: If content is string, wrap in array of text
+              // Wrap string content as output_text (Responses API format) so the SDK
+              // can replay it through getOutputMessageContent without throwing.
               if (typeof content === 'string') {
-                content = [{ type: 'text', text: content }];
+                content = [{ type: 'output_text', text: content }];
               }
               const out = { role: 'assistant', content };
               if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
@@ -1118,11 +1121,11 @@ export function createCallSession(callerPhone = '', options = {}) {
       const updates = fastMatchResult.updates || {};
       Object.assign(session, updates);
 
-      // Pushing to history for continuity
+      // Pushing to history for continuity (use output_text for Responses API compat)
       conversationHistory.push(sanitizeMessage({
         role: 'assistant',
         content: [{
-          type: 'text',
+          type: 'output_text',
           text: JSON.stringify({
             say: fastMatchResult.say,
             updates_json: JSON.stringify(updates),

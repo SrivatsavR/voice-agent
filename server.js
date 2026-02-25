@@ -551,7 +551,7 @@ wss.on('connection', (ws) => {
           if (audioBuffer && (currentNode === 'NODE_3_CONTACT_GST' || transcript.match(/[A-Z0-9]{10,}/i) || transcript.includes('@'))) {
             Promise.resolve().then(async () => {
               try {
-                const burst = await transcribeAudioBurst(audioBuffer, { language: 'hi' }); // Best for Hinglish
+                const burst = await transcribeAudioBurst(audioBuffer, { language: 'multi' }); // Auto-detect Hindi + English
                 if (burst?.transcript && burst.transcript.toLowerCase() !== transcript.toLowerCase()) {
                   callLog.withComponent('Validation').info(`[Burst Correction] REST Result: "${burst.transcript}" (Streaming was: "${transcript}")`);
 
