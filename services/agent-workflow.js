@@ -1149,6 +1149,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           kbText = parsed.data || kbRaw;
         } catch (e) { /* use raw if not JSON */ }
         // Perform recursive turn synchronously, marking as recursive to maintain ID
+        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, null, null, {}, true);
         if (sessionLogger) sessionLogger.info(`[Chat-RAG] Recursive turn results: ${recursiveResult.say.substring(0, 50)}...`);
         // Important: merge recursive results back to session if they aren't already
         Object.assign(session, recursiveResult.session);
