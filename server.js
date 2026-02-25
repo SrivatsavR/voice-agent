@@ -530,7 +530,9 @@ wss.on('connection', (ws) => {
         },
         onSpeakingEnd: () => {
           interruptionManager.onSpeakingEnd();
-          if (!isProcessingTranscript) {
+          // Only resume silence filler if NOT processing a transcript AND no background tasks running.
+          // Without the bg task check, the silence filler fires during KB fetch / email validation.
+          if (!isProcessingTranscript && !callSession.getBgTasksRunning()) {
             silenceFiller?.resume(); // Agent finished: restart 7s countdown
           }
         },

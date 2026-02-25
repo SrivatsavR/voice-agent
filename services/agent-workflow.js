@@ -183,8 +183,9 @@ const detailsAgent = new Agent({
 === QUESTION FLOW ===
   1. **Items**: If 'products_sold' is empty/missing in session, ask: "Achha, toh aap kis tarah ke items bechte hain?" — Otherwise SKIP.
 2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing in session, ask: "Aur in items ki price range kya rehti hai?" — Otherwise SKIP. If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
-3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing in session, ask: "Aap kabse meesho pey list karna start karna chahte hai?" — Otherwise SKIP.
+3. **Listing Date (MANDATORY)**: If 'listing_start' is missing AND 'raw_listing_start' is missing in session, you MUST ask: "Aap kab tak meesho par list karna start kar sakte hain?" — Otherwise SKIP.
   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
+  - **CRITICAL**: You MUST NOT transition to NODE_3_CONTACT_GST without asking this question. This field is required.
 
 === GLOBAL EXTRACTION & INTENT ===
 - **EXTRACTION**: Capture ANY info provided (Email, GST, Name, etc.) even if not asked. Put in 'updates_json'.
@@ -198,8 +199,9 @@ const detailsAgent = new Agent({
 - NEVER ask the price range if 'price_min' or 'raw_price_min' is present in context.
 
 === ROUTING ===
-  - Stay in NODE_2_DETAILS until all questions are answered('products_sold', 'price_min' / 'raw_price_min', and 'listing_start' / 'raw_listing_start' are collected).
-- Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aachi baat hai. Aapka email address kya hai?"`,
+  - Stay in NODE_2_DETAILS until ALL THREE fields are captured: 'products_sold', 'price_min'/'raw_price_min', AND 'listing_start'/'raw_listing_start'.
+- **CRITICAL**: Do NOT set next_node to NODE_3_CONTACT_GST if 'listing_start' AND 'raw_listing_start' are BOTH missing. You MUST ask the listing date question first.
+- Once ALL THREE are collected, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aachi baat hai. Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [validatePriceRangeTool, normalizeListingDateTool]
@@ -225,6 +227,12 @@ const contactGstAgent = new Agent({
 | NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'.Ask for UIN / Enrollment ID. |
 | GIVING_UIN | user provides UIN / Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION.Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
+
+=== ASYNC EMAIL INVALIDATION ===
+- Email is validated in the background. You may receive a SYSTEM message saying the email is invalid AFTER you have already moved on to GST/UIN questions.
+- If this happens: Politely inform the user their email had an issue and ask them to repeat it. Do NOT re-ask for GST/UIN if it is already captured in the session.
+- Example: "Aapka email verify nahi ho paaya — kya aap dobara apna email bata sakte hai?"
+- After the corrected email is captured, check the session: if GST/UIN is already present, transition to Node 4 immediately.
 
 === GLOBAL EXTRACTION ===
 - **EXTRACTION**: Capture ANY info provided (Price, Items, Name, etc.) even if not asked. Put in 'updates_json'.
@@ -434,6 +442,8 @@ export function createCallSession(callerPhone = '', options = {}) {
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
   let lastProcessedTranscript = ''; // Track last processed transcript to avoid duplicates
+  let lastProcessedState = ''; // Track session state to allow same transcript when state changes
+  let bgTaskCounter = 0; // Session-level counter for active background tasks (email, GST, KB, etc.)
 
   // Store session-level logger so it's accessible from processTranscript
   // without being shadowed by the inner `options` parameter
@@ -451,6 +461,29 @@ export function createCallSession(callerPhone = '', options = {}) {
       sessionLogger.withComponent('Database').info('External session update', { updates });
     }
     notifyUpdate();
+  }
+
+  // ── Guard: Prevent premature node transitions ────────────────────────
+  function guardNodeTransition(fromNode, proposedNext) {
+    if (fromNode === 'NODE_2_DETAILS' && proposedNext !== 'NODE_2_DETAILS' && proposedNext !== 'CONTINUE') {
+      // Don't leave Node 2 without listing date captured
+      if (!session.listing_start && !session.raw_listing_start) {
+        if (sessionLogger) sessionLogger.warn('[Guard] Blocked premature exit from NODE_2_DETAILS — listing_start missing');
+        return 'CONTINUE';
+      }
+    }
+    return proposedNext;
+  }
+
+  // ── Guard: Protect captured values from being cleared by LLM updates ──
+  function protectCapturedValues(updates) {
+    if (!updates || typeof updates !== 'object') return;
+    const protectedKeys = ['gstin', 'email', 'name_spoken', 'uin'];
+    for (const key of protectedKeys) {
+      if (key in updates && !updates[key] && session[key]) {
+        delete updates[key];
+      }
+    }
   }
 
   // ── Internal runner ─────────────────────────────────────────────────────
@@ -730,11 +763,14 @@ export function createCallSession(callerPhone = '', options = {}) {
     const cleanTranscript = transcript.trim();
 
     // Check if we've already processed this exact transcript (e.g. Fast-Match already handled it)
-    if (cleanTranscript === lastProcessedTranscript && !isRecursive) {
+    // Include session state in comparison so "haan" can be processed again after state changes
+    const currentStateKey = `${currentNode}|${session.pitch_delivered}|${session.interest_in_meesho}|${session.name_spoken}|${session.has_bank_account}`;
+    if (cleanTranscript === lastProcessedTranscript && currentStateKey === lastProcessedState && !isRecursive) {
       if (sessionLogger) sessionLogger.info(`[Workflow] Skipping duplicate transcript: ${cleanTranscript}`);
       return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
     }
     lastProcessedTranscript = cleanTranscript;
+    lastProcessedState = currentStateKey;
 
     const currentProcId = isRecursive ? currentProcessingId : ++currentProcessingId;
     // Early exit if the call is no longer active (WS closed or Twilio stopped)
@@ -798,8 +834,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       // Use session-level logger (not shadowed by processTranscript's options parameter)
       const log = sessionLogger;
 
-      let bgTaskCounter = 0;
-
       const incrementBg = () => {
         bgTaskCounter++;
         if (bgTaskCounter === 1 && silenceFiller) {
@@ -853,7 +887,11 @@ export function createCallSession(callerPhone = '', options = {}) {
                 if (isActiveCallback()) {
                   const errorMsg = valData.data?.error || "Invalid format";
                   if (log) log.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
-                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid(${errorMsg}).Politely ask the user to repeat the email address.]`, tts, silenceFiller);
+                  const gstAlreadyCaptured = session.gstin || session.raw_gstin || session.uin || session.gst_declined === 'yes';
+                  const contextHint = gstAlreadyCaptured
+                    ? ' GST/UIN info is already saved — only re-ask for the email, then proceed to closure.'
+                    : '';
+                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid(${errorMsg}). Politely ask the user to repeat their email address.${contextHint}]`, tts, silenceFiller, {}, true);
                 }
               }
             }
@@ -881,6 +919,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.raw_gstin && session.bg_gst_running !== 'yes') {
         session.bg_gst_running = 'yes';
         incrementBg();
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_gst_running: 'yes' } });
         const candidate = updates.raw_gstin;
         Promise.resolve().then(async () => {
           try {
@@ -888,6 +927,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             const normalized = candidate.replace(/\s+/g, '').toUpperCase();
             session.gstin = normalized;
             session.gstin_valid = 'yes';
+            session.bg_gst_running = 'no'; // Mark background task as complete BEFORE notifyUpdate
             if (isActiveCallback()) {
               if (log) log.withComponent('Validation').info('[Background] GST Captured');
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: 'yes', bg_gst_running: 'no' } });
@@ -904,9 +944,11 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Apologize and ask for GST again.]`, tts, silenceFiller);
             }
           } finally {
+            session.bg_gst_running = 'no'; // Ensure bg flag is always cleared
             if (session.gstin_valid === 'yes') {
               delete session.raw_gstin;
             }
+            if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_gst_running: 'no' } });
             notifyUpdate();
             decrementBg();
           }
@@ -1059,9 +1101,11 @@ export function createCallSession(callerPhone = '', options = {}) {
     };
 
     // 1. Check Fast-Match Regex (Speed Path)
+    // Strip punctuation for matching (aligned with checkFastMatch logic)
+    const fastMatchText = cleanTranscript.toLowerCase().replace(/[.,?!|।]/g, '');
     if (FAST_MATCH_CONFIG[currentNode]) {
       for (const entry of FAST_MATCH_CONFIG[currentNode]) {
-        const match = cleanTranscript.match(entry.pattern);
+        const match = fastMatchText.match(entry.pattern);
         if (match) {
           // Rule: Never end conversation based on regex
           if (entry.next_node && entry.next_node.startsWith('TERM_')) continue;
@@ -1230,8 +1274,9 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       });
 
-      const nextNode = fastMatchResult.next_node === 'CONTINUE' ? currentNode : fastMatchResult.next_node;
-      if (nextNode !== currentNode) markNodeDone(currentNode);
+      let nextNode = fastMatchResult.next_node === 'CONTINUE' ? currentNode : fastMatchResult.next_node;
+      nextNode = guardNodeTransition(currentNode, nextNode);
+      if (nextNode !== currentNode && nextNode !== 'CONTINUE') markNodeDone(currentNode);
 
       const updates = fastMatchResult.updates || {};
       Object.assign(session, updates);
@@ -1343,6 +1388,13 @@ export function createCallSession(callerPhone = '', options = {}) {
         session.gstin_valid = 'yes';
         delete updates.raw_gstin;
         delete session.raw_gstin;
+        // Also remove gstin/gstin_valid from LLM updates to prevent Object.assign from overwriting
+        delete updates.gstin;
+        delete updates.gstin_valid;
+        if (sessionLogger) {
+          sessionLogger.withComponent('Validation').info('[Chat-Sync] GST Captured', { gstin: candidate });
+          sessionLogger.withComponent('Database').info('Saving session updates', { updates: { gstin: candidate, gstin_valid: 'yes' } });
+        }
         systemPrompts.push(`GST captured successfully as ${candidate}. Proceed to closure.`);
       }
 
@@ -1387,9 +1439,12 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       if (anySyncTask) {
         // Apply remaining updates and transition state BEFORE recursive call
+        protectCapturedValues(updates);
         Object.assign(session, updates);
         const prevNode = currentNode;
-        currentNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+        let syncNextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+        syncNextNode = guardNodeTransition(prevNode, syncNextNode);
+        currentNode = syncNextNode === 'CONTINUE' ? prevNode : syncNextNode;
         if (currentNode !== prevNode) markNodeDone(prevNode);
 
         const combinedMsg = `[SYSTEM: ${systemPrompts.join(' ')}]`;
@@ -1402,6 +1457,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
 
     if (finalLLMOutput.updates && isActiveCallback()) {
+      protectCapturedValues(finalLLMOutput.updates);
       Object.assign(session, finalLLMOutput.updates);
       if (sessionLogger && Object.keys(finalLLMOutput.updates).length > 0) {
         sessionLogger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
@@ -1413,9 +1469,10 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
 
     const prevNode = currentNode;
-    const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
-    if (nextNode !== prevNode) markNodeDone(prevNode);
-    currentNode = nextNode;
+    let nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
+    nextNode = guardNodeTransition(prevNode, nextNode);
+    if (nextNode !== prevNode && nextNode !== 'CONTINUE') markNodeDone(prevNode);
+    currentNode = nextNode === 'CONTINUE' ? currentNode : nextNode;
 
     // Update call_outcome when reaching a terminal node
     if (TERMINAL_NODES.has(currentNode)) {
