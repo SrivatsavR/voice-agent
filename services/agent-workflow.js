@@ -127,7 +127,7 @@ const DATA_INTERPRETATION_CONTEXT = `
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
   instructions: `=== YOUR TASK ===
-Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question.
+Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question. **NOTE**: Do not repeat the initial introduction ("Namaste! Main Meesho..."); proceed directly to the pitch or next question.
 
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
@@ -143,7 +143,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
 | NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
-| EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
+| EXTRA INFO | user gives price / items | Capture in 'updates_json'. |
 
 === ROUTING ===
 - Stay in NODE_1_NAME_INTEREST until 'interest_in_meesho', 'name_spoken', AND 'has_bank_account' are fully captured.
@@ -158,21 +158,21 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 const detailsAgent = new Agent({
   name: "NODE_2_DETAILS",
   instructions: `=== YOUR TASK ===
-Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentioned items or price range, do NOT ask for them. Capture any remaining info.
+  Collect business details. ** CHECK SYSTEM CONTEXT **: If the user already mentioned items or price range, do NOT ask for them.Capture any remaining info.
 
 === QUESTION FLOW ===
-1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
-2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?". If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
-3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
-   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
+  1. ** Items **: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
+2. ** Price **: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?".If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
+3. ** Speed **: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
+  - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
 === RULES ===
-- EVERY 'say' must end with a question mark.
-- If user provides price range (e.g. "100-200" or "so se do so"), you MUST extract numerical values for 'raw_price_min' and 'raw_price_max' and put them in 'updates_json'.
+    - EVERY 'say' must end with a question mark.
+- If user provides price range(e.g. "100-200" or "so se do so"), you MUST extract numerical values for 'raw_price_min' and 'raw_price_max' and put them in 'updates_json'.
 - NEVER ask the price range if 'price_min' or 'raw_price_min' is present in context.
 
 === ROUTING ===
-- Stay in NODE_2_DETAILS until all questions are answered ('products_sold', 'price_min'/'raw_price_min', and 'listing_start'/'raw_listing_start' are collected).
+  - Stay in NODE_2_DETAILS until all questions are answered('products_sold', 'price_min' / 'raw_price_min', and 'listing_start' / 'raw_listing_start' are collected).
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
@@ -183,28 +183,28 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
-Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
+  Collect email and GST. ** CHECK SYSTEM CONTEXT **: If the email or GST was already provided in earlier nodes, do NOT ask for them.Skip to the next missing field or finish.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
-2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
-3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing AND 'gstin' is missing AND 'raw_gstin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
+  1. ** Email **: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
+2. ** GST **: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
+3. ** UIN(Fallback) **: If 'gst_declined' is true AND 'uin' is missing AND 'gstin' is missing AND 'raw_gstin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
 
-=== INTENT DETECTION ===
+  === INTENT DETECTION ===
 | Intent | Signal | Action |
-|--------|--------|--------|
+| --------| --------| --------|
 | GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
 | HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
 | GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
-| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
-| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
-| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
+| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'.Ask for UIN / Enrollment ID. |
+| GIVING_UIN | user provides UIN / Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
+| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION.Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
 === ROUTING ===
-- Move to NODE_4_CLOSURE only after BOTH Email and (GST OR UIN) are captured.
+  - Move to NODE_4_CLOSURE only after BOTH Email and(GST OR UIN) are captured.
 - When transitioning, your 'say' MUST be the bridge question: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-- Do NOT use TERM_COMPLETE in Node 3.
-- Every 'say' MUST end with a question mark.`,
+  - Do NOT use TERM_COMPLETE in Node 3.
+    - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: []
@@ -214,24 +214,24 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
-First, handle any incoming questions about Meesho. Maintain the session in NODE_4_CLOSURE as long as the user is asking questions or seeking clarification.
+  First, handle any incoming questions about Meesho.Maintain the session in NODE_4_CLOSURE as long as the user is asking questions or seeking clarification.
 
 === FLOW ===
-1. **QnA Phase (Priority)**:
-   - If the user asks a question (e.g., benefits, shipping, commission, "How to sell?"):
-     - You MUST set 'kb_query' in 'updates_json' to their question.
-     - Respond only with: "Zaroor, main check karke batati hoon." 
-     - The system will provide Knowledge Base results in the next turn.
+    1. ** QnA Phase(Priority) **:
+- If the user asks a question(e.g., benefits, shipping, commission, "How to sell?"):
+- You MUST set 'kb_query' in 'updates_json' to their question.
+     - Respond only with: "Zaroor, main check karke batati hoon."
+  - The system will provide Knowledge Base results in the next turn.
      - Once you receive KB results, explain them simply in Hindi and ASK: "Kya aapko kuch aur jaanna hai?"
-   - **CRITICAL**: Stay in 'NODE_4_CLOSURE' (next_node: CONTINUE) while answering questions.
+  - ** CRITICAL **: Stay in 'NODE_4_CLOSURE'(next_node: CONTINUE) while answering questions.
 
-2. **Closing Phase (Termination)**:
-   - ONLY proceed to this phase if the user explicitly says they have NO more questions (e.g., "nahi", "no", "bas itna hi", "theek hai", "okay thanks").
+2. ** Closing Phase(Termination) **:
+- ONLY proceed to this phase if the user explicitly says they have NO more questions(e.g., "nahi", "no", "bas itna hi", "theek hai", "okay thanks").
    - Final Say MUST BE EXACTLY: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
-   - Set "next_node": "TERM_COMPLETE".
+  - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
+    - NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
 - Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
 - Ensure the final closing phrase is warm and complete before exiting.`,
   model: "gpt-4o-mini",
@@ -328,7 +328,7 @@ function parseAgentOutput(rawOutput) {
   }
 
   // Strip markdown code fences if they survived
-  text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+  text = text.replace(/```json\s * /gi, '').replace(/```\s*/g, '').trim();
 
   try {
     const parsed = JSON.parse(text);
@@ -395,7 +395,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         // System message is now handled externally/consistently
         const systemMessage = sanitizeMessage({
           role: 'system',
-          content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
+          content: `${BASE_VOICE_CONTEXT} \n${GLOBAL_GUARDRAILS} \n${DATA_INTERPRETATION_CONTEXT} `
         });
 
         // --- Smart History Slicing (Revised v29) ---
@@ -452,7 +452,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         for await (const event of stream) {
           // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
           if (myProcessingId !== currentProcessingId) {
-            if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
+            if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop(ID: ${myProcessingId})`);
             break;
           }
 
@@ -518,7 +518,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   function markNodeDone(nodeName) {
     const match = nodeName.match(/NODE_(\d)/);
     if (match) {
-      session[`node${match[1]}_done`] = true;
+      session[`node${match[1]} _done`] = true;
     }
   }
 
@@ -534,7 +534,9 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
+    const text = "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
+    conversationHistory.push(sanitizeMessage({ role: 'assistant', content: text }));
+    return text;
   }
 
   // --- Regex Fast-Path Configuration ---
@@ -549,19 +551,19 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (session.pitch_delivered) {
               return {
                 updates: { name_spoken: name },
-                say: `Achha, ${name} ji. Toh kya aap Meesho join karna chahte hain?`,
+                say: `Achha, ${name} ji.Toh kya aap Meesho join karna chahte hain ? `,
                 next_node: 'CONTINUE'
               };
             }
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?`,
+              say: `Achha, ${name} ji.Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai.Kya aap Meesho join karke apne business ko badhana chahte hain ? `,
               next_node: 'CONTINUE'
             };
           }
           return {
             updates: { name_spoken: name },
-            say: `Achha, ${name} ji. Kya aapke paas bank account hai?`,
+            say: `Achha, ${name} ji.Kya aapke paas bank account hai ? `,
             next_node: 'CONTINUE'
           };
         }
@@ -685,7 +687,7 @@ export function createCallSession(callerPhone = '', options = {}) {
 
         return JSON.stringify(safeResult);
       } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error:`, err);
+        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error: `, err);
         return JSON.stringify({
           success: false,
           error: err.message,
@@ -730,7 +732,7 @@ export function createCallSession(callerPhone = '', options = {}) {
                 if (isActiveCallback()) {
                   const errorMsg = valData.data?.error || "Invalid format";
                   if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
-                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid (${errorMsg}). Politely ask the user to repeat the email address.]`, tts, silenceFiller);
+                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid(${errorMsg}).Politely ask the user to repeat the email address.]`, tts, silenceFiller);
                 }
               }
             }
@@ -738,7 +740,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             console.error(e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
               if (options.logger) options.logger.withComponent('Validation').error('[Background] Email check crashed', e);
-              await processTranscript(`[SYSTEM: Verification failed due to internal tool error. Ask for email again politely.]`, tts, silenceFiller);
+              await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Ask for email again politely.]`, tts, silenceFiller);
             }
           } finally {
             session.bg_email_running = false;
@@ -772,7 +774,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             console.error(e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
               if (options.logger) options.logger.withComponent('Validation').error('[Background] GST check crashed', e);
-              await processTranscript(`[SYSTEM: Verification failed due to internal tool error. Apologize and ask for GST again.]`, tts, silenceFiller);
+              await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Apologize and ask for GST again.]`, tts, silenceFiller);
             }
           } finally {
             session.bg_gst_running = false;
@@ -807,7 +809,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             console.error(e);
             if (options.logger) options.logger.withComponent('Validation').error('[Background] Listing Date tool crashed', e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
-              await processTranscript(`[SYSTEM: Listing Date validation failed due to internal error. Ask the user for the date again.]`, tts, silenceFiller);
+              await processTranscript(`[SYSTEM: Listing Date validation failed due to internal error.Ask the user for the date again.]`, tts, silenceFiller);
             }
           } finally {
             session.bg_listing_running = false;
@@ -835,7 +837,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (isNaN(pMin) || isNaN(pMax)) {
               if (options.logger) options.logger.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
+                await processTranscript(`[SYSTEM: The price you captured("${originalMin}" - "${originalMax}") is text.Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
               }
               return;
             }
@@ -851,7 +853,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             console.error(e);
             if (options.logger) options.logger.withComponent('Validation').error('[Background] Price Range tool crashed', e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
-              await processTranscript(`[SYSTEM: Price Range validation failed due to internal error. Ask the user for the price range again.]`, tts, silenceFiller);
+              await processTranscript(`[SYSTEM: Price Range validation failed due to internal error.Ask the user for the price range again.]`, tts, silenceFiller);
             }
           } finally {
             session.bg_price_running = false;
@@ -878,7 +880,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             try {
               const kbResult = await runTool(searchKnowledgeBaseTool, { query });
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
+                if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query} `);
                 await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
               }
             } catch (e) {
@@ -899,7 +901,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
           if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
 
-          if (options.logger) options.logger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
+          if (options.logger) options.logger.info(`[Fast - Match] Predictive match: ${cleanTranscript} `);
           if (tts && isActiveCallback()) {
             tts.sendText(fastMatchResult.say);
             tts.flush();
@@ -923,8 +925,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       const activeData = Object.fromEntries(Object.entries(session).filter(([k, v]) => k !== 'caller_phone' && v !== '' && v !== null && v !== 0 && (Array.isArray(v) ? v.length > 0 : true)));
       const today = new Date();
       const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-      const formattedToday = `${today.getDate().toString().padStart(2, '0')}/${monthNames[today.getMonth()]}/${today.getFullYear()}`;
-      userMessage = `${transcript}\n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
+      const formattedToday = `${today.getDate().toString().padStart(2, '0')} /${monthNames[today.getMonth()]}/${today.getFullYear()} `;
+      userMessage = `${transcript} \n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
     }
 
     // PUSH USER MESSAGE TO HISTORY ONCE
@@ -1025,7 +1027,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
 
         if ((predY && actN) || termC || nameMismatch) {
-          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}, termC=${termC}`);
+          if (options.logger) options.logger.warn(`[Conflict] LLM override.nameMismatch = ${nameMismatch}, termC = ${termC} `);
           if (isActiveCallback()) {
             tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
             Object.assign(session, actual.updates);
@@ -1078,7 +1080,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     // wait for the result and perform the recursive turn synchronously so the user gets the final answer.
     if (!tts && finalLLMOutput.updates?.kb_query) {
       const query = finalLLMOutput.updates.kb_query;
-      if (options.logger) options.logger.info(`[Chat-RAG] Sync-handling query: ${query}`);
+      if (options.logger) options.logger.info(`[Chat - RAG] Sync - handling query: ${query} `);
 
       // CRITICAL: Save current turn updates BEFORE recursing, otherwise they are lost
       Object.assign(session, finalLLMOutput.updates);
