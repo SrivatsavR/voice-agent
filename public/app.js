@@ -93,11 +93,16 @@ function handleLogEntry(entry) {
         }
     }
 
-    // 3. Extractable intelligence (Variable extraction events)
-    if (component === 'Validation' || component === 'Database' || component === 'Workflow' ||
+    // 3. Extractable intelligence (Variable extraction events, Barge-ins, Silence)
+    const lowMsg = msg.toLowerCase();
+    const isIntelligence = component === 'Validation' || component === 'Database' || component === 'Workflow' ||
+        component === 'Interruption' || component === 'SilenceFiller' || component === 'KnowledgeBase' || component === 'VectorSearch' ||
         msg.includes('[Background]') || msg.includes('Saving session updates') || msg.includes('Validated') ||
         msg.includes('[FastMatch]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]') ||
-        msg.toLowerCase().includes('captured') || msg.toLowerCase().includes('validated')) {
+        lowMsg.includes('barge-in') || lowMsg.includes('silence filler') || msg.includes('[Chat-RAG]') ||
+        lowMsg.includes('captured') || lowMsg.includes('validated') || lowMsg.includes('searching') || lowMsg.includes('retrieved');
+
+    if (isIntelligence) {
 
         let type = 'info';
         if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.toLowerCase().includes('match') || msg.includes('Retrieved') || msg.includes('Validated')) type = 'success';
@@ -131,28 +136,32 @@ function logIntelligence(text, type = 'info') {
         'Database': 'database',
         'Saving': 'database',
         'Workflow': 'git-branch',
-        'Fast-Match': 'zap',
+        'FastMatch': 'zap',
         'Burst': 'zap',
         'KnowledgeBase': 'search',
         'VectorSearch': 'search',
         'Validated': 'check-circle',
-        'Invalid': 'alert-circle'
+        'Invalid': 'alert-circle',
+        'Barge-in': 'mic-off',
+        'Silence': 'clock',
+        'RAG': 'search'
     };
 
     let icon = 'info'; // Default icon
     const lowText = text.toLowerCase();
 
     // Check for specific keywords first
-    if (lowText.includes('burst')) icon = 'zap';
-    else if (lowText.includes('fast-match')) icon = 'zap';
-    else if (lowText.includes('valid')) icon = 'shield-check';
-    else if (lowText.includes('found')) icon = 'check-circle';
-    else if (lowText.includes('captured')) icon = 'database';
-    else if (lowText.includes('search') || lowText.includes('query') || lowText.includes('embedding') || lowText.includes('retrieved')) icon = 'search';
+    if (lowText.includes('barge-in')) icon = 'mic-off';
+    else if (lowText.includes('silence')) icon = 'clock';
+    else if (lowText.includes('burst')) icon = 'zap';
+    else if (lowText.includes('fast-match') || lowText.includes('fastmatch')) icon = 'zap';
+    else if (lowText.includes('valid') || lowText.includes('validated')) icon = 'shield-check';
+    else if (lowText.includes('captured') || lowText.includes('saving')) icon = 'database';
+    else if (lowText.includes('search') || lowText.includes('query') || lowText.includes('embedding') || lowText.includes('retrieved') || lowText.includes('rag')) icon = 'search';
     else {
-        // Then check against the iconMap for broader component/message types
+        // Fallback to iconMap
         for (const [key, val] of Object.entries(iconMap)) {
-            if (text.includes(key)) { // Use original text for map keys
+            if (text.includes(key)) {
                 icon = val;
                 break;
             }

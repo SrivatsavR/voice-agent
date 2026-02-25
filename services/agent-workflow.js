@@ -132,7 +132,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par crores customers hain aur hum zero commission fee charge karte hain. Kya aap Meesho join karna chahte hain?") then ask that question.
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?") then ask that question.
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -534,7 +534,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?";
   }
 
   // --- Regex Fast-Path Configuration ---
@@ -555,7 +555,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. Meesho par crores customers hain aur hum zero commission fee charge karte hain. Kya aap Meesho join karna chahte hain?`,
+              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?`,
               next_node: 'CONTINUE'
             };
           }
