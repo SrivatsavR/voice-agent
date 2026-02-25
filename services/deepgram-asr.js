@@ -14,6 +14,9 @@ export class DeepgramASR {
         this._audioBuffer = []; // To store raw audio for the current utterance
         this._connectTimeout = null;
         this._flushTimeout = null;
+        this._safetyFlushTimeout = null;
+        this._lastResultTime = 0;
+        this._audioSentSinceLastResult = false;
         this.options = options;
 
         this._log = (options.logger || new Logger('ASR')).withComponent('ASR');
@@ -99,11 +102,21 @@ export class DeepgramASR {
             try {
                 const msg = JSON.parse(data.toString());
                 if (msg.type === 'Results') {
+                    // Reset safety watchdog — Deepgram is alive
+                    this._audioSentSinceLastResult = false;
+                    if (this._safetyFlushTimeout) {
+                        clearTimeout(this._safetyFlushTimeout);
+                        this._safetyFlushTimeout = null;
+                    }
                     this._handleTranscript(msg);
                 } else if (msg.type === 'SpeechStarted') {
                     this.options.onSpeechStarted?.();
-                } else if (msg.type === 'UtteranceEnd' && this._utteranceBuffer.trim()) {
-                    // Ignore Deepgram's native utterance end to strictly enforce 5s voice inactivity flush
+                } else if (msg.type === 'UtteranceEnd') {
+                    // Deepgram signals end-of-utterance — flush any buffered transcript
+                    if (this._utteranceBuffer.trim()) {
+                        this._log.info('UtteranceEnd → flushing buffered transcript');
+                        this._forceFlush();
+                    }
                 } else if (msg.type === 'Error' || msg.error) {
                     this._log.error('Deepgram API Error', msg);
                 } else if (msg.type !== 'Metadata') {
@@ -199,6 +212,23 @@ export class DeepgramASR {
             const buffer = Buffer.from(base64Audio, 'base64');
             this._audioBuffer.push(buffer); // Save for REST burst
             this.ws.send(buffer);
+
+            // Safety watchdog: if we keep sending audio but Deepgram never replies,
+            // force a reconnect after 5s to recover from silent connections.
+            if (!this._safetyFlushTimeout) {
+                this._audioSentSinceLastResult = true;
+                this._safetyFlushTimeout = setTimeout(() => {
+                    this._safetyFlushTimeout = null;
+                    if (this._audioSentSinceLastResult && !this._closed) {
+                        this._log.warn('⚠️ No Deepgram results received for 5s despite audio flowing — reconnecting');
+                        this._audioSentSinceLastResult = false;
+                        // Force close and reconnect
+                        if (this.ws?.readyState === WebSocket.OPEN) {
+                            this.ws.close(1000, 'safety_reconnect');
+                        }
+                    }
+                }, 5000);
+            }
         } catch { }
     }
 
@@ -213,6 +243,10 @@ export class DeepgramASR {
         this._closed = true;
         this.isReady = false;
         this._stopKeepalive();
+        if (this._safetyFlushTimeout) {
+            clearTimeout(this._safetyFlushTimeout);
+            this._safetyFlushTimeout = null;
+        }
 
         if (this._utteranceBuffer.trim()) {
             this.onTranscript?.(this._utteranceBuffer.trim());

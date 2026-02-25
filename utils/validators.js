@@ -210,7 +210,7 @@ export const normalizeListingDateTool = tool({
             } else {
                 const dateMatch = input.match(/(\d{1,2})[th|st|nd|rd]?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/);
                 if (dateMatch) {
-                    const parsed = new Date(`${dateMatch[1]} ${dateMatch[2]} 2026`);
+                    const parsed = new Date(`${dateMatch[1]} ${dateMatch[2]} ${now.getFullYear()}`);
                     if (!isNaN(parsed)) {
                         target = parsed;
                     } else {

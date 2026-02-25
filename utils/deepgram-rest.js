@@ -1,4 +1,7 @@
 // Native fetch used (Node 18+)
+import { Logger } from './logger.js';
+
+const log = new Logger('DeepgramREST');
 
 /**
  * Deepgram Pre-recorded (REST) API Wrapper
@@ -41,7 +44,7 @@ export async function transcribeAudioBurst(buffer, options = {}) {
             raw: result
         };
     } catch (err) {
-        console.error('[DeepgramREST] Transcription failed:', err);
+        log.error('Transcription failed', err);
         return null;
     }
 }

@@ -552,7 +552,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   function markNodeDone(nodeName) {
     const match = nodeName.match(/NODE_(\d)/);
     if (match) {
-      session[`node${match[1]} _done`] = true;
+      session[`node${match[1]}_done`] = true;
     }
   }
 
@@ -581,11 +581,14 @@ export function createCallSession(callerPhone = '', options = {}) {
         handle: (match, session) => {
           if (!session) return null;
           const name = match[2].trim();
-          return {
-            updates: { name_spoken: name, pitch_delivered: 'yes' },
-            say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
-            next_node: 'CONTINUE'
-          };
+          if (session.pitch_delivered !== 'yes') {
+            // Deliver pitch + capture name in one shot
+            return {
+              updates: { name_spoken: name, pitch_delivered: 'yes' },
+              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
+              next_node: 'CONTINUE'
+            };
+          }
           if (!session.interest_in_meesho) {
             // Pitch delivered but interest not yet captured — ask interest
             return {
@@ -889,8 +892,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               return;
             }
 
-            const res = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
-            if (res && typeof res === 'object' && res.valid) {
+            const resRaw = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
+            const resData = typeof resRaw === 'string' ? JSON.parse(resRaw) : resRaw;
+            const res = resData?.data || resData;
+            if (res && res.valid) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
               if (log) log.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });

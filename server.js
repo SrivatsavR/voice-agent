@@ -373,11 +373,32 @@ app.post('/api/chat', async (req, res) => {
 
   sessionObj = liveSessions.get(callId);
   if (!sessionObj) {
-    // Session expired or not found, start new
+    // Session expired or not found — recreate and process the pending message
+    // so the user's input isn't silently lost on server restart.
     callId = generateCallId();
     sessionObj = createCallSession(callerPhone, { logger: Logger.forCall(callId, 'chat', callerPhone) });
     liveSessions.set(callId, sessionObj);
     const welcome = await sessionObj.getWelcome();
+
+    if (text?.trim()) {
+      // Process the user's message in the new session so it's not lost
+      try {
+        const result = await sessionObj.processTranscript(text);
+        if (sessionObj.isTerminal()) {
+          saveToHistory(sessionObj.getSession());
+          liveSessions.delete(callId);
+        }
+        return res.json({
+          callId,
+          welcome,
+          ...result,
+          wasExpired: true
+        });
+      } catch (err) {
+        serverLog.error('Chat resume error', err);
+      }
+    }
+
     return res.json({
       callId,
       say: welcome,
@@ -540,7 +561,7 @@ wss.on('connection', (ws) => {
                   // If it looks like a GST (15 chars) - Simply Collect
                   if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
                     sess.gstin = cleanedBurst;
-                    sess.gstin_valid = true; // Mark as collected
+                    sess.gstin_valid = 'yes'; // Mark as collected
                     callLog.withComponent('Validation').info(`[Burst Success] Collected GSTIN from burst: ${cleanedBurst}`);
                   }
                   // If it looks like an email
@@ -549,9 +570,9 @@ wss.on('connection', (ws) => {
                     const parsedNorm = typeof norm === 'string' ? JSON.parse(norm) : norm;
                     const val = await validateEmailTool.invoke({ email: parsedNorm.normalized_email });
                     const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
-                    if (parsedVal.valid) {
-                      sess.email = parsedVal.normalized;
-                      sess.email_valid = true;
+                    if (parsedVal.valid || parsedVal.success) {
+                      sess.email = parsedVal.normalized || parsedVal.data?.normalized;
+                      sess.email_valid = 'yes';
                       callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${parsedVal.normalized}`);
                     }
                   }

@@ -230,10 +230,13 @@ async function sendMessage(text) {
     });
 
     if (data.wasExpired) {
-        addMessage('system', 'Previous session expired. Starting new conversation.');
+        addMessage('system', 'Session resumed after server restart.');
         currentCallId = data.callId;
+        localStorage.setItem('lastCallId', currentCallId);
         callIdDisplay.textContent = `ID: ${currentCallId}`;
         setupRealtimeEvents(currentCallId);
+        // Show welcome if the server included it alongside the response
+        if (data.welcome) addMessage('agent', data.welcome);
     }
 
     if (data.say) addMessage('agent', data.say);
@@ -324,6 +327,12 @@ function stripAnsi(str) {
     return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 }
 
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
 function addMessage(role, text) {
     if (!text) return;
 
@@ -340,11 +349,14 @@ function addMessage(role, text) {
         'system': 'bg-red-50 border-red-100 text-red-600 italic rounded-lg text-[11px]'
     };
 
+    const safeText = escapeHtml(text);
+    const safeRole = escapeHtml(role);
+
     div.innerHTML = `
         <div class="px-5 py-3 border backdrop-blur-sm max-w-[85%] ${bubbleClasses[role]} shadow-sm">
-            <p class="text-sm leading-relaxed">${text}</p>
+            <p class="text-sm leading-relaxed">${safeText}</p>
         </div>
-        <span class="text-[9px] uppercase tracking-widest text-slate-400 font-bold px-1">${role}</span>
+        <span class="text-[9px] uppercase tracking-widest text-slate-400 font-bold px-1">${safeRole}</span>
     `;
 
     chatMessages.appendChild(div);
@@ -369,24 +381,26 @@ function updateVariables(session) {
     localStorage.setItem('lastSession', JSON.stringify(session));
 
     targets.forEach(target => {
-        let val = target.format ? target.format(session) : session[target.key];
-        const isCaptured = val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true);
+        let val = target.format ? target.format(session) : (session[target.key] || (target.fallback ? session[target.fallback] : null));
+        // Standardize "yes"/"no" as captured
+        const isCaptured = (val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true));
 
         // Determine "Syncing" state
         let isSyncing = false;
-        if (target.key === 'email' && session.bg_email_running) isSyncing = true;
-        if (target.key === 'gstin' && session.bg_gst_running) isSyncing = true;
-        if (target.key === 'listing_start' && session.bg_listing_running) isSyncing = true;
-        if (target.key === 'price_min' && session.bg_price_running) isSyncing = true;
+        if (target.key === 'email' && session.bg_email_running === 'yes') isSyncing = true;
+        if (target.key === 'gstin' && session.bg_gst_running === 'yes') isSyncing = true;
+        if (target.key === 'listing_start' && session.bg_listing_running === 'yes') isSyncing = true;
+        if (target.key === 'price_min' && session.bg_price_running === 'yes') isSyncing = true;
 
         const div = document.createElement('div');
-        // Remove captured highlight; use neutral opacity when not captured
+        // Always display prominently if we have ANY data (raw or validated)
         div.className = `variable-card col-span-1 p-2 rounded-xl flex items-center gap-2 group ${isCaptured ? 'captured' : 'opacity-40'}`;
 
         let displayVal = isSyncing ? 'Syncing...' : '--';
         if (isCaptured) {
             const rawVal = Array.isArray(val) ? val[0] : val;
             displayVal = rawVal && rawVal.toString().length > 20 ? rawVal.toString().substring(0, 18) + '..' : (rawVal || '--');
+            if (isSyncing) displayVal = `🔄 ${displayVal}`;
         }
 
         div.innerHTML = `
