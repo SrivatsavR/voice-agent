@@ -143,6 +143,11 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
   3. If Name is known but Bank Account is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?".
 - **IMPORTANT**: The pitch must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
 
+=== GLOBAL EXTRACTION ===
+- You MUST capture ANY information the user provides, even if you didn't ask for it.
+- If user gives name, products, price, email, or GST, update 'updates_json' immediately.
+- If user asks a question, set 'kb_query' and answer according to QnA rules.
+
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
@@ -172,6 +177,12 @@ const detailsAgent = new Agent({
 2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing in session, ask: "Aur in items ki price range kya rehti hai?" — Otherwise SKIP. If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
 3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing in session, ask: "Aap kabse meesho pey list karna start karna chahte hai?" — Otherwise SKIP.
   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
+
+=== GLOBAL EXTRACTION & INTENT ===
+- **EXTRACTION**: Capture ANY info provided (Email, GST, Name, etc.) even if not asked. Put in 'updates_json'.
+- **ITEMS**: If user mentions products (e.g. "sari", "electronics"), update 'products_sold'.
+- **PRICE**: Capture both min and max if provided (e.g. "100 se 200").
+- **KB**: If they ask a question, set 'kb_query', say "Main check karke batati hoon" and stay in NODE_2_DETAILS.
 
 === RULES ===
     - EVERY 'say' must end with a question mark.
@@ -206,6 +217,10 @@ const contactGstAgent = new Agent({
 | NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'.Ask for UIN / Enrollment ID. |
 | GIVING_UIN | user provides UIN / Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION.Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
+
+=== GLOBAL EXTRACTION ===
+- **EXTRACTION**: Capture ANY info provided (Price, Items, Name, etc.) even if not asked. Put in 'updates_json'.
+- **KB**: If they ask a question, set 'kb_query', say "Main check karke batati hoon" and stay in NODE_3_CONTACT_GST.
 
 === ROUTING ===
   - Move to NODE_4_CLOSURE only after BOTH Email and(GST OR UIN) are captured.
@@ -243,6 +258,7 @@ const closureAgent = new Agent({
 - If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. Explain it naturally in Hindi. Set 'kb_search_active': false in 'updates_json'.
 - NEVER set next_node: "TERM_COMPLETE" if 'kb_search_active' is true.
 - Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
+- **EXTRACTION**: Capture ANY session data provided in 'updates_json'.
 - Ensure the final closing phrase is warm and complete before exiting.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
@@ -799,7 +815,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               finalUpdates.raw_email = null;
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
-            if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
+            if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
           }
         });
       }
@@ -830,7 +846,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (session.gstin_valid === 'yes') {
               delete session.raw_gstin;
             }
-            if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
+            if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
           }
         });
       }
@@ -838,7 +854,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 3. Listing Date Normalization
       if (updates.raw_listing_start && session.bg_listing_running !== 'yes') {
         session.bg_listing_running = 'yes';
-        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: 'yes' } });
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: 'yes', raw_listing_start: updates.raw_listing_start } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
@@ -875,7 +891,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && session.bg_price_running !== 'yes') {
         session.bg_price_running = 'yes';
-        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: 'yes' } });
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: 'yes', raw_price_min: updates.raw_price_min, raw_price_max: updates.raw_price_max } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
         let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
@@ -970,7 +986,13 @@ export function createCallSession(callerPhone = '', options = {}) {
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
           if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
 
-          if (sessionLogger) sessionLogger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
+          if (sessionLogger) {
+            sessionLogger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
+            // Instant UI broadcast for Fast-Match updates
+            if (fastMatchResult.updates) {
+              sessionLogger.withComponent('Database').info('Saving session updates', { updates: fastMatchResult.updates });
+            }
+          }
           if (tts && isActiveCallback()) {
             tts.sendText(fastMatchResult.say);
             tts.flush();

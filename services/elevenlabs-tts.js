@@ -46,6 +46,7 @@ export class ElevenLabsTTS {
         this._audioQueue = []; // Queue for chunks to be dripped to Twilio
         this._isDripping = false;
         this._lastTextSentAt = 0;
+        this._isGenerating = false;
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -195,6 +196,7 @@ export class ElevenLabsTTS {
     }
 
     _markSpeakingStart() {
+        this._isGenerating = false;
         if (!this._isSpeaking) {
             this._isSpeaking = true;
             try { this._onSpeakingStart(); } catch { }
@@ -261,6 +263,7 @@ export class ElevenLabsTTS {
         }
 
         // 3. Reset speaking state
+        this._isGenerating = false;
         this._markSpeakingEnd();
     }
 
@@ -314,6 +317,7 @@ export class ElevenLabsTTS {
                     text: text,
                     try_trigger_generation: true
                 }));
+                this._isGenerating = true;
             } catch (err) {
                 this._log.error('Failed to send text to ElevenLabs', err);
                 this.isReady = false;
@@ -405,6 +409,7 @@ export class ElevenLabsTTS {
         this.isReady = false;
         this._stopHeartbeat();
         this._cancelSpeakingEndTimer();
+        this._isGenerating = false;
         this._markSpeakingEnd();
         this._log.info('Closing TTS connection');
 
@@ -427,6 +432,6 @@ export class ElevenLabsTTS {
      */
     hasPendingAudio() {
         const textSentRecently = (Date.now() - this._lastTextSentAt) < 2000;
-        return textSentRecently || this._audioQueue.length > 0;
+        return textSentRecently || this._audioQueue.length > 0 || this._isGenerating;
     }
 }

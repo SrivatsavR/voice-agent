@@ -45,7 +45,7 @@ export class DeepgramASR {
             return;
         }
 
-        const lang = this.options.language || 'multi';
+        const lang = this.options.language || 'hi';
 
         const params = new URLSearchParams({
             model: 'nova-2',

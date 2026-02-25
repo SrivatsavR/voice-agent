@@ -22,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // detect silence after 3s
-const SILENCE_FILLER_TIMEOUT_MS = 3000;
+const SILENCE_FILLER_TIMEOUT_MS = 7000;
 
 /**
  * SilenceFillerManager
@@ -553,7 +553,7 @@ wss.on('connection', (ws) => {
           if (audioBuffer && (currentNode === 'NODE_3_CONTACT_GST' || transcript.match(/[A-Z0-9]{10,}/i) || transcript.includes('@'))) {
             Promise.resolve().then(async () => {
               try {
-                const burst = await transcribeAudioBurst(audioBuffer, { language: 'multi' }); // Auto-detect Hindi + English
+                const burst = await transcribeAudioBurst(audioBuffer, { language: 'hi' }); // Use Hindi (handles English code-switching well)
                 if (burst?.transcript && burst.transcript.toLowerCase() !== transcript.toLowerCase()) {
                   callLog.withComponent('Validation').info(`[Burst Correction] REST Result: "${burst.transcript}" (Streaming was: "${transcript}")`);
 
@@ -665,15 +665,17 @@ wss.on('connection', (ws) => {
             closeAfterSpeaking();
           } else {
             // Processing done, not terminal: Resume silence filler for next gap
-            // ONLY if the agent isn't currently speaking (if it is, onSpeakingEnd will handle it)
-            if (!tts?.isSpeaking) {
+            // ONLY if the agent isn't currently speaking or about to speak
+            if (!tts?.isSpeaking && !tts?.hasPendingAudio()) {
               silenceFiller?.resume();
             }
           }
         } catch (err) {
           isProcessingTranscript = false;
           callLog.withComponent('WS').error('ASR callback error', err);
-          silenceFiller?.resume();
+          if (!tts?.isSpeaking && !tts?.hasPendingAudio()) {
+            silenceFiller?.resume();
+          }
         }
       };
 
@@ -732,7 +734,7 @@ wss.on('connection', (ws) => {
                       setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.close(); }, 5000);
                     }
                   }, 500);
-                } else if (!tts?.isSpeaking) {
+                } else if (!tts?.isSpeaking && !tts?.hasPendingAudio()) {
                   silenceFiller?.resume();
                 }
 
