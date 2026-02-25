@@ -116,6 +116,9 @@ When you are about to move to the next node (next_node), your "say" field MUST c
 
 ── 7. HANDLING QUESTIONS ──
 If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
+**ACCURACY**: Once Knowledge Base results arrive, provide the ACTUAL answer immediately. If the data says "7 days", your answer MUST be "7 days" (7 din). Do NOT hallucinate.
+── 8. PRICE EXTRACTION ──
+If the user mentions a price range (e.g., "100 to 200"), ALWAYS extract both 'raw_price_min': 100 AND 'raw_price_max': 200.
 `;
 
 // ─── Node Specific Contexts ───────────────────────────────────────────────────
@@ -188,7 +191,7 @@ const detailsAgent = new Agent({
 === GLOBAL EXTRACTION & INTENT ===
 - **EXTRACTION**: Capture ANY info provided (Email, GST, Name, etc.) even if not asked. Put in 'updates_json'.
 - **ITEMS**: If user mentions products (e.g. "sari", "electronics"), update 'products_sold'.
-- **PRICE**: Capture both min and max if provided (e.g. "100 se 200").
+- **PRICE**: If the user mentions a range (e.g. "100 se 200"), you MUST capture both 'raw_price_min': 100 AND 'raw_price_max': 200.
 - **KB**: If they ask a question, set 'kb_query', say "Main check karke batati hoon" and stay in NODE_2_DETAILS.
 
 === RULES ===
