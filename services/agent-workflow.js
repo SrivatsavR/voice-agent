@@ -138,10 +138,10 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?" Set 'pitch_delivered': "yes". Do NOT pitch again after this.
-  2. If 'interest_in_meesho' is "yes" but Name is missing: Ask "Aapka poora naam kya hai?".
-  3. If Name is known but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
-- **IMPORTANT**: The pitch (14 Cr+ customers, zero commission, free logistics) must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
+  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask for interest: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
+  2. If 'pitch_delivered' is "yes" but 'interest_in_meesho' is missing: Interpret any positive response (ack) as interest confirmed. Move directly to the Name question: "Aapka poora naam kya hai?". Set 'interest_in_meesho': "yes".
+  3. If Name is known but Bank Account is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?".
+- **IMPORTANT**: The pitch must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -609,9 +609,11 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        // Interest & Acknowledgment
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए|पक्का)$/i,
         handle: (match, session) => {
           if (!session) return null;
+          // If pitch not delivered, deliver it and ask for interest (Combined Step)
           if (session.pitch_delivered !== 'yes') {
             return {
               updates: { pitch_delivered: 'yes' },
@@ -619,18 +621,12 @@ export function createCallSession(callerPhone = '', options = {}) {
               next_node: 'CONTINUE'
             };
           }
+          // If pitch delivered but interest not captured, any 'haan' confirms interest
           if (!session.interest_in_meesho) {
             return {
               updates: { interest_in_meesho: 'yes' },
               say: session.name_spoken ? "Achha, toh bank account hai?" : "Aapka poora naam kya hai?",
               next_node: 'CONTINUE'
-            };
-          }
-          else if (session.name_spoken && !session.has_bank_account) {
-            return {
-              updates: { has_bank_account: 'yes' },
-              say: "Achha, toh bank account hai. Aap kis tarah ke items bechte hain?",
-              next_node: 'NODE_2_DETAILS'
             };
           }
           return null;
@@ -946,6 +942,11 @@ export function createCallSession(callerPhone = '', options = {}) {
               if (sessionLogger) sessionLogger.withComponent('KnowledgeBase').info(`[Background] KB Results found for: "${query}"`, { info_length: kbText.length });
 
               if (isActiveCallback()) {
+                // CRITICAL FIX: Clear search active flag BEFORE recursive turn.
+                // This prevents the synchronous part of processTranscript from appending 
+                // "search in progress" instructions that contradict the injected results.
+                session.kb_search_active = false;
+
                 // We proceed even if currentProcId moved, because the user might have just said "ok" 
                 // and we still want to deliver the answer.
                 await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller, {}, true);
@@ -995,7 +996,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const formattedToday = `${today.getDate().toString().padStart(2, '0')} /${monthNames[today.getMonth()]}/${today.getFullYear()} `;
       userMessage = `${transcript} \n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
-      if (session.kb_search_active) {
+      if (session.kb_search_active && !transcript.includes('[SYSTEM: Knowledge Base Results:')) {
         userMessage += `\n[SYSTEM: A Knowledge Base search is currently in progress. DO NOT terminate. Wait for results.]`;
       }
     }

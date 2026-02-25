@@ -369,10 +369,10 @@ function updateVariables(session) {
         { key: 'interest_in_meesho', label: 'Joining Interest', icon: 'thumbs-up' },
         { key: 'has_bank_account', label: 'Active Bank Acc?', icon: 'credit-card' },
         { key: 'products_sold', label: 'Product Items', icon: 'package' },
-        { key: 'price_min', label: 'Price Range', icon: 'tag', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : null) },
-        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar' },
-        { key: 'email', label: 'Email Address', icon: 'mail' },
-        { key: 'gstin', label: 'GST/UIN', icon: 'shield-check' }
+        { key: 'price_min', label: 'Price Range', icon: 'tag', fallback: 'raw_price_min', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : (s.raw_price_min ? s.raw_price_min : null)) },
+        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start' },
+        { key: 'email', label: 'Email Address', icon: 'mail', fallback: 'raw_email' },
+        { key: 'gstin', label: 'GST/UIN', icon: 'shield-check', fallback: 'raw_gstin' }
     ];
 
     sessionVariables.innerHTML = '';
@@ -381,7 +381,7 @@ function updateVariables(session) {
     localStorage.setItem('lastSession', JSON.stringify(session));
 
     targets.forEach(target => {
-        let val = target.format ? target.format(session) : (session[target.key] || (target.fallback ? session[target.fallback] : null));
+        let val = target.format ? target.format(session) : (session[target.key] || (target.fallback ? session[target.fallback] : (target.key === 'gstin' ? session.uin : null)));
         // Standardize "yes"/"no" as captured
         const isCaptured = (val !== undefined && val !== null && val !== '' && val !== 'unknown' && val !== false && (Array.isArray(val) ? val.length > 0 : true));
 
@@ -400,7 +400,9 @@ function updateVariables(session) {
         if (isCaptured) {
             const rawVal = Array.isArray(val) ? val[0] : val;
             displayVal = rawVal && rawVal.toString().length > 20 ? rawVal.toString().substring(0, 18) + '..' : (rawVal || '--');
-            if (isSyncing) displayVal = `🔄 ${displayVal}`;
+            if (isSyncing && !val.toString().includes('₹')) { // If syncing and we only have raw text
+                // Keep showing the raw text but maybe with a pulse
+            }
         }
 
         div.innerHTML = `

@@ -493,6 +493,7 @@ wss.on('connection', (ws) => {
 
   callLog.withComponent('WS').info('WebSocket connection accepted');
 
+  let audioPacketCount = 0;
   ws.on('message', async (message) => {
     let msg;
     try { msg = JSON.parse(message); } catch { return; }
@@ -507,6 +508,7 @@ wss.on('connection', (ws) => {
       const log = callLog.withComponent('WS');
 
       log.info('Stream starting', { streamSid, callerPhone, asr_provider: ASR_PROVIDER });
+      audioPacketCount = 0;
 
       // Create interruption manager for this call
       interruptionManager = new InterruptionManager(callLog, DEFAULT_INTERRUPTIONS_ENABLED);
@@ -781,7 +783,13 @@ wss.on('connection', (ws) => {
       }
     }
     else if (msg.event === 'media') {
-      if (isActive) asr?.sendAudio(msg.media.payload);
+      if (isActive) {
+        audioPacketCount++;
+        if (audioPacketCount % 100 === 0) {
+          callLog.withComponent('WS').debug(`Audio packets received: ${audioPacketCount}`);
+        }
+        asr?.sendAudio(msg.media.payload);
+      }
     }
     else if (msg.event === 'stop') {
       // IMPORTANT: Do NOT tear down ASR/TTS here.

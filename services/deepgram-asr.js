@@ -100,14 +100,15 @@ export class DeepgramASR {
 
         this.ws.on('message', (data) => {
             try {
+                // ANY message from Deepgram resets the safety watchdog
+                this._audioSentSinceLastResult = false;
+                if (this._safetyFlushTimeout) {
+                    clearTimeout(this._safetyFlushTimeout);
+                    this._safetyFlushTimeout = null;
+                }
+
                 const msg = JSON.parse(data.toString());
                 if (msg.type === 'Results') {
-                    // Reset safety watchdog — Deepgram is alive
-                    this._audioSentSinceLastResult = false;
-                    if (this._safetyFlushTimeout) {
-                        clearTimeout(this._safetyFlushTimeout);
-                        this._safetyFlushTimeout = null;
-                    }
                     this._handleTranscript(msg);
                 } else if (msg.type === 'SpeechStarted') {
                     this.options.onSpeechStarted?.();
@@ -120,7 +121,7 @@ export class DeepgramASR {
                 } else if (msg.type === 'Error' || msg.error) {
                     this._log.error('Deepgram API Error', msg);
                 } else if (msg.type !== 'Metadata') {
-                    this._log.debug('Deepgram unstructured message', msg);
+                    this._log.debug('Deepgram message', { type: msg.type });
                 }
             } catch (err) {
                 this._log.error('Deepgram parse error', { error: err.message, data: data.toString() });
@@ -214,20 +215,20 @@ export class DeepgramASR {
             this.ws.send(buffer);
 
             // Safety watchdog: if we keep sending audio but Deepgram never replies,
-            // force a reconnect after 5s to recover from silent connections.
+            // force a reconnect after 15s to recover from silent connections.
             if (!this._safetyFlushTimeout) {
                 this._audioSentSinceLastResult = true;
                 this._safetyFlushTimeout = setTimeout(() => {
                     this._safetyFlushTimeout = null;
                     if (this._audioSentSinceLastResult && !this._closed) {
-                        this._log.warn('⚠️ No Deepgram results received for 5s despite audio flowing — reconnecting');
+                        this._log.warn('⚠️ No Deepgram results received for 15s despite audio flowing — reconnecting to recover');
                         this._audioSentSinceLastResult = false;
                         // Force close and reconnect
                         if (this.ws?.readyState === WebSocket.OPEN) {
                             this.ws.close(1000, 'safety_reconnect');
                         }
                     }
-                }, 5000);
+                }, 15000);
             }
         } catch { }
     }
