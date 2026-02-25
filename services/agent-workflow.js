@@ -201,8 +201,9 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 | NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
 
 === ROUTING ===
-- Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
+- Move to NODE_4_CLOSURE only after BOTH Email and (GST OR UIN) are captured.
+- When transitioning, your 'say' MUST be the bridge question: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+- Do NOT use TERM_COMPLETE in Node 3.
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
@@ -213,22 +214,26 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
-Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
+First, handle any incoming questions about Meesho. Maintain the session in NODE_4_CLOSURE as long as the user is asking questions or seeking clarification.
 
 === FLOW ===
-1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
-   Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
-   - Reply with: "Zaroor, main check karke batati hoon." 
-   - Wait for the system to provide the Knowledge Base info in the next turn.
-3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"), or if you have just answered their questions and they are satisfied:
-   - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
+1. **QnA Phase (Priority)**:
+   - If the user asks a question (e.g., benefits, shipping, commission, "How to sell?"):
+     - You MUST set 'kb_query' in 'updates_json' to their question.
+     - Respond only with: "Zaroor, main check karke batati hoon." 
+     - The system will provide Knowledge Base results in the next turn.
+     - Once you receive KB results, explain them simply in Hindi and ASK: "Kya aapko kuch aur jaanna hai?"
+   - **CRITICAL**: Stay in 'NODE_4_CLOSURE' (next_node: CONTINUE) while answering questions.
+
+2. **Closing Phase (Termination)**:
+   - ONLY proceed to this phase if the user explicitly says they have NO more questions (e.g., "nahi", "no", "bas itna hi", "theek hai", "okay thanks").
+   - Final Say MUST BE EXACTLY: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- NEVER end the call immediately after taking details. Always ask "Kya aapko kuch aur jaanna hai?".
-- Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
-- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
+- NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
+- Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
+- Ensure the final closing phrase is warm and complete before exiting.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: []
@@ -256,8 +261,6 @@ export const TERMINAL_NODES = new Set([
 
 const createDefaultSession = () => ({
   caller_phone: '',
-  uin: '',
-  closure_bridge_delivered: false,
   // Node 1
   name_spoken: '',
   is_right_person: '',
