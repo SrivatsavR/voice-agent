@@ -145,13 +145,15 @@ const nameInterestAgent = new Agent({
   instructions: `=== YOUR TASK ===
 Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoken', 'interest_in_meesho', or 'has_bank_account' are already present, SKIP those questions. If the user provides ANY extra info (items, price, email, GST), CAPTURE it in 'updates_json' immediately. **NOTE**: Do not repeat the initial introduction ("Namaste! Main Meesho..."); proceed directly to the pitch or next question.
 
-=== QUESTION FLOW ===
+=== QUESTION FLOW (STRICT ORDER) ===
 - **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
-- **Ask the next missing field**:
-  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask for interest: "Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
-  2. If 'pitch_delivered' is "yes" but 'interest_in_meesho' is missing: Interpret any positive response (ack) as interest confirmed. Move directly to the Name question: "Aapka poora naam kya hai?". Set 'interest_in_meesho': "yes".
-  3. If Name is known but Bank Account is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?".
-- **IMPORTANT**: The pitch must be delivered ONLY ONCE per call. If 'pitch_delivered' is "yes", NEVER repeat the pitch details (21 crore, zero commission, etc.).
+- **Question Order**:
+  1. **Pitch & Interest**: If 'pitch_delivered' is "no": Deliver the pitch AND ask for interest: "Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
+  2. **Confirm Interest**: If 'pitch_delivered' is "yes" but 'interest_in_meesho' is missing: You MUST confirm if they want to sell. If they say "yes" or "haan", set 'interest_in_meesho': "yes" and ask for their name: "Aapka poora naam kya hai?".
+  3. **Name**: If 'interest_in_meesho' is "yes" but 'name_spoken' is missing: Ask "Aapka poora naam kya hai?".
+  4. **Bank Account**: If 'name_spoken' is present but 'has_bank_account' is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?". Set 'has_bank_account' based on their response.
+- **CRITICAL**: You MUST NOT ask about the bank account until 'interest_in_meesho' is "yes". If they say "yes" to the bank account, ensure you set 'has_bank_account': "yes" in 'updates_json'.
+- **CRITICAL**: The pitch must be delivered ONLY ONCE per call. If 'pitch_delivered' is "yes", NEVER repeat the pitch details (21 crore, zero commission, etc.).
 
 === GLOBAL EXTRACTION ===
 - You MUST capture ANY information the user provides, even if you didn't ask for it.
@@ -221,7 +223,7 @@ const contactGstAgent = new Agent({
   === INTENT DETECTION ===
 | Intent | Signal | Action |
 | --------| --------| --------|
-| GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
+| GIVING_EMAIL | user provides email | Acknowledge naturally (e.g., "Theek hai") then set 'raw_email' in 'updates_json'. |
 | HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
 | GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
 | NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'.Ask for UIN / Enrollment ID. |
@@ -240,19 +242,18 @@ const contactGstAgent = new Agent({
 
 === ROUTING ===
   - Move to NODE_4_CLOSURE only after BOTH Email and(GST OR UIN) are captured.
-- When transitioning, your 'say' MUST be EXACTLY: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+- When transitioning, your 'say' MUST be EXACTLY: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho के baare mein kuch aur jaanna hai?"
   - Do NOT use TERM_COMPLETE in Node 3.
     - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: []
 });
-
 // ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
-  First, handle any incoming questions about Meesho.Maintain the session in NODE_4_CLOSURE as long as the user is asking questions or seeking clarification.
+  First, handle any incoming questions about Meesho. Maintain the session in NODE_4_CLOSURE as long as the user is asking questions or seeking clarification.
 
 === FLOW ===
     1. ** QnA Phase(Priority) **:
@@ -261,14 +262,15 @@ const closureAgent = new Agent({
      - Respond only with: "Zaroor, main check karke batati hoon."
   - The system will provide Knowledge Base results in the next turn.
      - Once you receive KB results, explain them simply in Hindi and ASK: "Kya aapko kuch aur jaanna hai?"
-   - ** KB SEARCH GUARD **: If 'kb_search_active' is true in the session, do NOT use TERM_COMPLETE even if the user says "ok" or "theek hai". Wait for the results.
+    - ** KB SEARCH GUARD **: If 'kb_search_active' is true in the session, do NOT use TERM_COMPLETE even if the user says "ok" or "theek hai". Wait for the results.
   - ** CRITICAL **: Stay in 'NODE_4_CLOSURE'(next_node: CONTINUE) while answering questions.
 
 2. ** Closing Phase(Termination) **:
-- ONLY proceed to this phase if the user explicitly says they have NO more questions(e.g., "nahi", "no", "bas itna hi") AND 'kb_search_active' is NOT true.
-- If the user says "ok" or "theek hai" while you are searching (after you said "check karke batati hoon"), simply acknowledge ("Ji") and wait for the system result. Do NOT close.
-   - Final Say MUST BE EXACTLY: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
-  - Set "next_node": "TERM_COMPLETE".
+- ONLY proceed to this phase if the user explicitly confirms they have NO more questions (e.g., "no", "nahi", "bas itna hi"). 
+- **TIGHTENED QnA**: If the user says "ok", "theek hai", or "ji" while you are in this node (without asking a specific question), do NOT close yet. Ask if they want to know specifically about Meesho payouts, margin, or delivery to ensure they don't have unasked questions.
+- **CLOSING RULE**: Only close if they explicitly say they have no more questions or ask to end.
+- When closing, provide a warm closing in Hindi, thanking them for their time and mentioning that they can list items on Meesho once their documents are verified.
+- Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
 - If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. You MUST explain it naturally in Hindi. Set 'kb_search_active': false in 'updates_json'.
@@ -792,7 +794,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       try {
         const rawResult = toolObj.execute ?
           await toolObj.execute(params) :
-          await toolObj.invoke(params);
+          await toolObj.invoke({}, JSON.stringify(params));
 
         // If the tool returned an already-stringified standard result, return it as-is 
         // to avoid double JSON encoding.
@@ -872,6 +874,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               if (valData.success && valData.data.valid) {
                 session.email = valData.data.normalized;
                 session.email_valid = 'yes';
+                delete session.raw_email; // Clear raw_email before recursion so skip rules don't block progress
                 if (log) {
                   log.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
                   log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: 'yes' } });
@@ -884,6 +887,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               } else if (currentProcId === currentProcessingId) {
                 session.email_valid = 'no';
                 session.email_attempts = (session.email_attempts || 0) + 1;
+                delete session.raw_email; // Clear raw_email so agent can re-ask in recursive turn
                 if (isActiveCallback()) {
                   const errorMsg = valData.data?.error || "Invalid format";
                   if (log) log.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
@@ -934,6 +938,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               notifyUpdate();
 
               if (currentProcId === currentProcessingId) {
+                delete session.raw_gstin; // Clear before recursion
                 await processTranscript(`[SYSTEM: GST captured successfully. Proceed to closure.]`, tts, silenceFiller, {}, true);
               }
             }
@@ -1135,9 +1140,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     const agent = NODE_AGENTS[currentNode];
     if (!agent) {
       if (TERMINAL_NODES.has(currentNode)) {
-        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session, call_outcome: 'complete' } };
+        return { say: "", next_node: currentNode, session: { ...session } };
       }
-      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session, call_outcome: 'complete' } };
+      return { say: "Goodbye.", next_node: 'TERM_COMPLETE', session: { ...session } };
     }
 
     let userMessage = transcript;
