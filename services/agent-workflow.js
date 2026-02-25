@@ -1184,7 +1184,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         'TERM_WRONG_PERSON': 'wrong_person',
         'TERM_NO_REGISTRATION': 'no_registration'
       };
-      session.call_outcome = outcomeMap[currentNode] || 'completed';
+      session.call_outcome = outcomeMap[currentNode] || 'complete';
     }
 
     return { say: finalLLMOutput.say, next_node: nextNode, notes: finalLLMOutput.notes, session: { ...session }, streamedByNode: true };

@@ -799,7 +799,7 @@ wss.on('connection', (ws) => {
     // Unregister from active calls
     if (callSession) {
       const sess = callSession.getSession();
-      if (!sess.call_outcome || sess.call_outcome === 'in_progress') sess.call_outcome = 'completed';
+      if (!sess.call_outcome || sess.call_outcome === 'in_progress') sess.call_outcome = 'complete';
       saveToHistory(sess);
     }
     activeCalls.delete(callId);
