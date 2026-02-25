@@ -534,7 +534,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function getWelcome() {
     markNodeDone('NODE_0_WELCOME');
     currentNode = 'NODE_1_NAME_INTEREST';
-    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?";
+    return "Namaste! Main Meesho seller onboarding team se Asmita bol rahi hoon.";
   }
 
   // --- Regex Fast-Path Configuration ---
@@ -661,7 +661,18 @@ export function createCallSession(callerPhone = '', options = {}) {
           await toolObj.execute(params) :
           await toolObj.invoke(params);
 
-        // FORCE JSON - no exceptions
+        // If the tool returned an already-stringified standard result, return it as-is 
+        // to avoid double JSON encoding.
+        if (typeof rawResult === 'string') {
+          try {
+            const parsed = JSON.parse(rawResult);
+            if (parsed && typeof parsed === 'object' && ('success' in parsed)) {
+              return rawResult;
+            }
+          } catch (e) { /* not JSON, proceed to wrap */ }
+        }
+
+        // FORCE JSON - no exceptions for tools that return objects/strings directly
         const safeResult = {
           success: true,
           data: rawResult,
