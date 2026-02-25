@@ -63,10 +63,25 @@ function handleLogEntry(entry) {
 
     const msg = stripAnsi(entry.message || '');
     const component = entry.component;
+    const lowMsgEarly = msg.toLowerCase();
 
     // 1. Chat messages
     const role = component === 'Agent' ? 'agent' : (component === 'User' ? 'user' : null);
     if (role) {
+        // Check if this is an intelligence event (barge-in, silence filler, etc.)
+        // If so, log it to the extraction feed AND display as chat message
+        const isBargeIn = lowMsgEarly.includes('barge-in');
+        const isSilenceFiller = lowMsgEarly.includes('silence filler') || lowMsgEarly.includes('firing silence');
+        const isKB = lowMsgEarly.includes('knowledgebase') || lowMsgEarly.includes('knowledge base');
+
+        if (isBargeIn) {
+            logIntelligence('Barge-in detected', 'warn');
+        } else if (isSilenceFiller) {
+            logIntelligence('Silence filler fired', 'info');
+        } else if (isKB) {
+            logIntelligence(msg.replace(/\[.*?\]/g, '').trim().substring(0, 57) || 'KB search triggered', 'info');
+        }
+
         let txt = msg;
         if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
 
@@ -77,6 +92,9 @@ function handleLogEntry(entry) {
                 txt = parsed.say || txt;
             } catch (e) { }
         }
+
+        // Don't add barge-in partials as regular chat messages
+        if (isBargeIn) return;
 
         addMessage(role, txt);
     }
@@ -93,21 +111,22 @@ function handleLogEntry(entry) {
         }
     }
 
-    // 3. Extractable intelligence (Variable extraction events, Barge-ins, Silence)
+    // 3. Extractable intelligence (Variable extraction events, Barge-ins, Silence, KB)
     const lowMsg = msg.toLowerCase();
     const isIntelligence = component === 'Validation' || component === 'Database' || component === 'Workflow' ||
         component === 'Interruption' || component === 'SilenceFiller' || component === 'KnowledgeBase' || component === 'VectorSearch' ||
         msg.includes('[Background]') || msg.includes('Saving session updates') || msg.includes('Validated') ||
         msg.includes('[FastMatch]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]') ||
-        lowMsg.includes('barge-in') || lowMsg.includes('silence filler') || msg.includes('[Chat-RAG]') ||
-        lowMsg.includes('captured') || lowMsg.includes('validated') || lowMsg.includes('searching') || lowMsg.includes('retrieved');
+        lowMsg.includes('barge-in') || lowMsg.includes('silence filler') || lowMsg.includes('firing silence') || msg.includes('[Chat-RAG]') ||
+        lowMsg.includes('captured') || lowMsg.includes('validated') || lowMsg.includes('searching') || lowMsg.includes('retrieved') ||
+        lowMsg.includes('answer found') || lowMsg.includes('kb query');
 
     if (isIntelligence) {
 
         let type = 'info';
-        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.toLowerCase().includes('match') || msg.includes('Retrieved') || msg.includes('Validated')) type = 'success';
+        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.toLowerCase().includes('match') || msg.includes('Retrieved') || msg.includes('Validated') || lowMsg.includes('answer found')) type = 'success';
         if (msg.includes('Invalid') || msg.includes('Error') || msg.includes('failed') || msg.includes('Discarding')) type = 'warn';
-        if (msg.includes('Searching') || msg.includes('Querying') || msg.includes('Generating embedding')) type = 'info';
+        if (msg.includes('Searching') || msg.includes('Querying') || msg.includes('Generating embedding') || component === 'SilenceFiller') type = 'info';
 
         let displayMsg = msg;
         if (msg.includes('processTranscript')) return; // ignore timing logs
@@ -334,7 +353,7 @@ function addMessage(role, text) {
 
 function updateVariables(session) {
     const targets = [
-        { key: 'name_spoken', label: 'Candidate Name', icon: 'user' },
+        { key: 'name_spoken', label: 'Seller Name', icon: 'user' },
         { key: 'interest_in_meesho', label: 'Joining Interest', icon: 'thumbs-up' },
         { key: 'has_bank_account', label: 'Active Bank Acc?', icon: 'credit-card' },
         { key: 'products_sold', label: 'Product Items', icon: 'package' },
@@ -447,14 +466,37 @@ document.addEventListener('visibilitychange', () => {
     }
 });
 
-// Start
-if (currentCallId) {
-    callIdDisplay.textContent = `ID: ${currentCallId}`;
-    updateVariables(currentSession);
-    setupRealtimeEvents(currentCallId);
-    backfillLogs(currentCallId);
-    refreshHistory();
-} else {
-    startNewSession();
-}
+// Start — validate stored session or create fresh one
+(async function init() {
+    if (currentCallId) {
+        // Validate that this session still exists on the server
+        try {
+            const history = await api('/api/history');
+            const found = history.find(h => h.callId === currentCallId);
+            if (found) {
+                // Session exists on server — resume it
+                currentSession = found;
+                callIdDisplay.textContent = `ID: ${currentCallId}`;
+                updateVariables(currentSession);
+                setupRealtimeEvents(currentCallId);
+                backfillLogs(currentCallId);
+                refreshHistory();
+            } else {
+                // Session no longer exists on server — start fresh
+                localStorage.removeItem('lastCallId');
+                localStorage.removeItem('lastSession');
+                await startNewSession();
+            }
+        } catch (e) {
+            // API failed — start fresh to be safe
+            console.warn('[App] Failed to validate stored session, starting new', e);
+            localStorage.removeItem('lastCallId');
+            localStorage.removeItem('lastSession');
+            await startNewSession();
+        }
+    } else {
+        // No stored session — new device or cleared storage
+        await startNewSession();
+    }
+})();
 setInterval(refreshHistory, 5000);

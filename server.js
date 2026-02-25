@@ -287,20 +287,22 @@ app.get('/api/history', (req, res) => {
   const activeList = [];
   for (const [callId, call] of activeCalls) {
     if (call.callSession) {
+      const sess = call.callSession.getSession();
       activeList.push({
         callId,
-        ...call.callSession.getSession(),
+        ...sess,
         timestamp: new Date().toISOString(),
-        call_outcome: 'in_progress'
+        call_outcome: sess.call_outcome || 'in_progress'
       });
     }
   }
   for (const [callId, sessionObj] of liveSessions) {
+    const sess = sessionObj.getSession();
     activeList.push({
       callId,
-      ...sessionObj.getSession(),
+      ...sess,
       timestamp: new Date().toISOString(),
-      call_outcome: 'in_progress (text)'
+      call_outcome: sess.call_outcome || 'in_progress'
     });
   }
   const fullHistory = [...activeList, ...getHistory()];
@@ -797,7 +799,7 @@ wss.on('connection', (ws) => {
     // Unregister from active calls
     if (callSession) {
       const sess = callSession.getSession();
-      if (!sess.call_outcome) sess.call_outcome = 'completed';
+      if (!sess.call_outcome || sess.call_outcome === 'in_progress') sess.call_outcome = 'completed';
       saveToHistory(sess);
     }
     activeCalls.delete(callId);

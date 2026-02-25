@@ -35,7 +35,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says " Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. If the pitch has not been delivered yet, deliver it now (14 Cr+ customers, zero commission, free logistics) and ask if they are interested — all in one message.
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -101,9 +101,9 @@ Default to simple Hindi. Use English for numbers.
 If confused, apologize once. If still confused, route to TERM_CALLBACK.
 If the caller is busy, accommodate immediately and route to TERM_CALLBACK.
 
-── 5. CROSS-NODE EXTRACTION ──
-If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates_json' object immediately. 
-Refer to the current session data provided to see what is already captured.
+── 5. CROSS-NODE EXTRACTION & SKIP RULE ──
+If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates_json' object immediately.
+**SKIP RULE**: Before asking ANY question, check the [SYSTEM: Session] variables. If a field is already captured (non-empty), you MUST SKIP that question and move to the next MISSING field. NEVER re-ask for information already present in the session.
 
 ── 6. TRANSITION RULE ──
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
@@ -127,14 +127,15 @@ const DATA_INTERPRETATION_CONTEXT = `
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
   instructions: `=== YOUR TASK ===
-Qualify the seller. **PRIORITY**: If the user already provided their name, items, or price, CAPTURE them in 'updates_json' and move to the next MISSING question. **NOTE**: Do not repeat the initial introduction ("Namaste! Main Meesho..."); proceed directly to the pitch or next question.
+Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoken', 'interest_in_meesho', or 'has_bank_account' are already present, SKIP those questions. If the user provides ANY extra info (items, price, email, GST), CAPTURE it in 'updates_json' immediately. **NOTE**: Do not repeat the initial introduction ("Namaste! Main Meesho..."); proceed directly to the pitch or next question.
 
 === QUESTION FLOW ===
-- **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
+- **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho join karke apne business ko badhana chahte hain?") then ask that question.
-  2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
-  3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
+  1. If 'pitch_delivered' is false or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap interested hain?" Set 'pitch_delivered': true. Do NOT pitch again after this.
+  2. If 'interest_in_meesho' is "yes" but Name is missing: Ask "Aapka poora naam kya hai?".
+  3. If Name is known but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
+- **IMPORTANT**: The pitch (14 Cr+ customers, zero commission, free logistics) must be delivered ONLY ONCE. If 'pitch_delivered' is true, NEVER repeat the pitch.
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -158,12 +159,12 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 const detailsAgent = new Agent({
   name: "NODE_2_DETAILS",
   instructions: `=== YOUR TASK ===
-  Collect business details. ** CHECK SYSTEM CONTEXT **: If the user already mentioned items or price range, do NOT ask for them.Capture any remaining info.
+  Collect business details. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'products_sold', 'price_min'/'raw_price_min', or 'listing_start'/'raw_listing_start' are already present, SKIP those questions entirely. Only ask for MISSING fields.
 
 === QUESTION FLOW ===
-  1. ** Items **: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
-2. ** Price **: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?".If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
-3. ** Speed **: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
+  1. **Items**: If 'products_sold' is empty/missing in session, ask: "Achha, toh aap kis tarah ke items bechte hain?" — Otherwise SKIP.
+2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing in session, ask: "Aur in items ki price range kya rehti hai?" — Otherwise SKIP. If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
+3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing in session, ask: "Aap kabse meesho pey list karna start karna chahte hai?" — Otherwise SKIP.
   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
 
 === RULES ===
@@ -183,7 +184,7 @@ const detailsAgent = new Agent({
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
-  Collect email and GST. ** CHECK SYSTEM CONTEXT **: If the email or GST was already provided in earlier nodes, do NOT ask for them.Skip to the next missing field or finish.
+  Collect email and GST. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'email'/'raw_email' or 'gstin'/'raw_gstin'/'uin' are already present, SKIP those questions entirely. Only ask for MISSING fields. If ALL fields are captured, transition directly to Node 4.
 
 === QUESTION FLOW ===
   1. ** Email **: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
@@ -377,6 +378,10 @@ export function createCallSession(callerPhone = '', options = {}) {
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
 
+  // Store session-level logger so it's accessible from processTranscript
+  // without being shadowed by the inner `options` parameter
+  const sessionLogger = options.logger || null;
+
   // ── Internal runner ─────────────────────────────────────────────────────
 
   async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
@@ -547,23 +552,26 @@ export function createCallSession(callerPhone = '', options = {}) {
         handle: (match, session) => {
           if (!session) return null;
           const name = match[2].trim();
-          if (!session.interest_in_meesho) {
-            if (session.pitch_delivered) {
-              return {
-                updates: { name_spoken: name },
-                say: `Achha, ${name} ji.Toh kya aap Meesho join karna chahte hain ? `,
-                next_node: 'CONTINUE'
-              };
-            }
+          if (!session.pitch_delivered) {
+            // Name given before pitch — capture name, deliver combined pitch+interest question
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji.Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai.Kya aap Meesho join karke apne business ko badhana chahte hain ? `,
+              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap interested hain?`,
               next_node: 'CONTINUE'
             };
           }
+          if (!session.interest_in_meesho) {
+            // Pitch delivered but interest not yet captured — ask interest
+            return {
+              updates: { name_spoken: name },
+              say: `Achha, ${name} ji. Kya aap Meesho par selling mein interested hain?`,
+              next_node: 'CONTINUE'
+            };
+          }
+          // Interest captured — move to bank account
           return {
             updates: { name_spoken: name },
-            say: `Achha, ${name} ji.Kya aapke paas bank account hai ? `,
+            say: `Achha, ${name} ji. Kya aapke paas bank account hai?`,
             next_node: 'CONTINUE'
           };
         }
@@ -644,7 +652,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     const cleanTranscript = transcript.trim();
     // Early exit if the call is no longer active (WS closed or Twilio stopped)
     if (!isActiveCallback()) {
-      if (options.logger) options.logger.warn('[Workflow] processTranscript called after call ended — aborting');
+      if (sessionLogger) sessionLogger.warn('[Workflow] processTranscript called after call ended — aborting');
       return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
     }
 
@@ -654,7 +662,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     // --- Helpers ---
     const runTool = async (toolObj, params) => {
       if (!toolObj) {
-        if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
+        if (sessionLogger) sessionLogger.error('[Workflow] Tool object is undefined');
         return JSON.stringify({ success: false, error: 'Tool object is undefined', timestamp: Date.now() });
       }
 
@@ -681,13 +689,13 @@ export function createCallSession(callerPhone = '', options = {}) {
           timestamp: Date.now()
         };
 
-        if (options.logger) {
-          options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} executed successfully`);
+        if (sessionLogger) {
+          sessionLogger.withComponent('Workflow').debug(`Tool ${toolObj.name} executed successfully`);
         }
 
         return JSON.stringify(safeResult);
       } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error: `, err);
+        if (sessionLogger) sessionLogger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error: `, err);
         return JSON.stringify({
           success: false,
           error: err.message,
@@ -700,13 +708,15 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (!output || !output.updates) return;
       const updates = output.updates;
       const currentProcId = currentProcessingId;
+      // Use session-level logger (not shadowed by processTranscript's options parameter)
+      const log = sessionLogger;
 
       // Silent background scan for tasks (removed debug log per user request)
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
         session.bg_email_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: true } });
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: true } });
         const candidate = updates.raw_email;
         Promise.resolve().then(async () => {
           try {
@@ -722,16 +732,16 @@ export function createCallSession(callerPhone = '', options = {}) {
               if (valData.success && valData.data.valid) {
                 session.email = valData.data.normalized;
                 session.email_valid = true;
-                if (options.logger) {
-                  options.logger.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
-                  options.logger.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: true } });
+                if (log) {
+                  log.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
+                  log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: true } });
                 }
               } else if (currentProcId === currentProcessingId) {
                 session.email_valid = false;
                 session.email_attempts = (session.email_attempts || 0) + 1;
                 if (isActiveCallback()) {
                   const errorMsg = valData.data?.error || "Invalid format";
-                  if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
+                  if (log) log.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
                   await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid(${errorMsg}).Politely ask the user to repeat the email address.]`, tts, silenceFiller);
                 }
               }
@@ -739,7 +749,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           } catch (e) {
             console.error(e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
-              if (options.logger) options.logger.withComponent('Validation').error('[Background] Email check crashed', e);
+              if (log) log.withComponent('Validation').error('[Background] Email check crashed', e);
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Ask for email again politely.]`, tts, silenceFiller);
             }
           } finally {
@@ -749,7 +759,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               delete session.raw_email;
               finalUpdates.raw_email = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -767,13 +777,13 @@ export function createCallSession(callerPhone = '', options = {}) {
             session.gstin = normalized;
             session.gstin_valid = true;
             if (isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Captured');
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
+              if (log) log.withComponent('Validation').info('[Background] GST Captured');
+              if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
             }
           } catch (e) {
             console.error(e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
-              if (options.logger) options.logger.withComponent('Validation').error('[Background] GST check crashed', e);
+              if (log) log.withComponent('Validation').error('[Background] GST check crashed', e);
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Apologize and ask for GST again.]`, tts, silenceFiller);
             }
           } finally {
@@ -789,7 +799,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 3. Listing Date Normalization
       if (updates.raw_listing_start && !session.bg_listing_running) {
         session.bg_listing_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: true } });
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: true } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
@@ -802,12 +812,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             const norm = response.success ? response.data : null;
             if (norm && norm.valid && norm.normalized) {
               session.listing_start = norm.normalized;
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
+              if (log) log.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
+              if (log) log.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
             }
           } catch (e) {
             console.error(e);
-            if (options.logger) options.logger.withComponent('Validation').error('[Background] Listing Date tool crashed', e);
+            if (log) log.withComponent('Validation').error('[Background] Listing Date tool crashed', e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
               await processTranscript(`[SYSTEM: Listing Date validation failed due to internal error.Ask the user for the date again.]`, tts, silenceFiller);
             }
@@ -818,7 +828,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               delete session.raw_listing_start;
               finalUpdates.raw_listing_start = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -826,7 +836,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
         session.bg_price_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: true } });
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: true } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
         let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
@@ -835,7 +845,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (isNaN(pMin) || isNaN(pMax)) {
-              if (options.logger) options.logger.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
+              if (log) log.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
               if (isActiveCallback() && currentProcId === currentProcessingId) {
                 await processTranscript(`[SYSTEM: The price you captured("${originalMin}" - "${originalMax}") is text.Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
               }
@@ -846,12 +856,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (res && typeof res === 'object' && res.valid) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
+              if (log) log.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
+              if (log) log.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
             }
           } catch (e) {
             console.error(e);
-            if (options.logger) options.logger.withComponent('Validation').error('[Background] Price Range tool crashed', e);
+            if (log) log.withComponent('Validation').error('[Background] Price Range tool crashed', e);
             if (isActiveCallback() && currentProcId === currentProcessingId) {
               await processTranscript(`[SYSTEM: Price Range validation failed due to internal error.Ask the user for the price range again.]`, tts, silenceFiller);
             }
@@ -864,7 +874,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               finalUpdates.raw_price_min = null;
               finalUpdates.raw_price_max = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -878,13 +888,19 @@ export function createCallSession(callerPhone = '', options = {}) {
           // VOICE: Fire background transition and recursive turn
           Promise.resolve().then(async () => {
             try {
-              const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+              const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
+              // Extract clean text from KB result JSON
+              let kbText = kbRaw;
+              try {
+                const parsed = JSON.parse(kbRaw);
+                kbText = parsed.data || kbRaw;
+              } catch (e) { /* use raw if not JSON */ }
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query} `);
-                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
+                if (log) log.withComponent('KnowledgeBase').info(`Answer Found for: ${query}`);
+                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller);
               }
             } catch (e) {
-              if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
+              if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
             }
           });
         }
@@ -901,7 +917,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
           if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
 
-          if (options.logger) options.logger.info(`[Fast - Match] Predictive match: ${cleanTranscript} `);
+          if (sessionLogger) sessionLogger.info(`[Fast-Match] Predictive match: ${cleanTranscript}`);
           if (tts && isActiveCallback()) {
             tts.sendText(fastMatchResult.say);
             tts.flush();
@@ -943,12 +959,12 @@ export function createCallSession(callerPhone = '', options = {}) {
         let firstChunkLogged = false;
         let ttsFirstSentLogged = false;
         const llmStartTime = performance.now();
-        const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
+        const raw = await Logger.runWithContext(sessionLogger?.context || {}, async () => {
           return await runNode(agent, userMessage, (chunk) => {
             if (!firstChunkLogged) {
               firstChunkLogged = true;
-              if (options.logger) {
-                options.logger.withComponent('Timing').info('LLM first say chunk', {
+              if (sessionLogger) {
+                sessionLogger.withComponent('Timing').info('LLM first say chunk', {
                   ttft_ms: Math.round(performance.now() - llmStartTime),
                   chunk_preview: chunk.substring(0, 40)
                 });
@@ -964,8 +980,8 @@ export function createCallSession(callerPhone = '', options = {}) {
                   tts.sendText(toSendArr);
                   if (!ttsFirstSentLogged) {
                     ttsFirstSentLogged = true;
-                    if (options.logger) {
-                      options.logger.withComponent('Timing').info('TTS first text sent', {
+                    if (sessionLogger) {
+                      sessionLogger.withComponent('Timing').info('TTS first text sent', {
                         time_since_llm_start_ms: Math.round(performance.now() - llmStartTime),
                         text_preview: toSendArr.substring(0, 40)
                       });
@@ -989,7 +1005,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
         return parsed;
       } catch (e) {
-        if (options.logger) options.logger.error('[Workflow] llmPromise error', e);
+        if (sessionLogger) sessionLogger.error('[Workflow] llmPromise error', e);
         return null;
       }
     })();
@@ -1027,19 +1043,19 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
 
         if ((predY && actN) || termC || nameMismatch) {
-          if (options.logger) options.logger.warn(`[Conflict] LLM override.nameMismatch = ${nameMismatch}, termC = ${termC} `);
+          if (sessionLogger) sessionLogger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}, termC=${termC}`);
           if (isActiveCallback()) {
             tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
             Object.assign(session, actual.updates);
-            if (options.logger && Object.keys(actual.updates || {}).length > 0) {
-              options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
+            if (sessionLogger && Object.keys(actual.updates || {}).length > 0) {
+              sessionLogger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
             }
             currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
         } else if (isActiveCallback()) {
           Object.assign(session, actual.updates);
-          if (options.logger && Object.keys(actual.updates || {}).length > 0) {
-            options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
+          if (sessionLogger && Object.keys(actual.updates || {}).length > 0) {
+            sessionLogger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
           }
         }
       });
@@ -1064,11 +1080,24 @@ export function createCallSession(callerPhone = '', options = {}) {
         }]
       }));
 
-      if (options.logger && Object.keys(updates).length > 0) {
-        options.logger.withComponent('Database').info('Saving session updates', { updates });
+      if (sessionLogger && Object.keys(updates).length > 0) {
+        sessionLogger.withComponent('Database').info('Saving session updates', { updates });
       }
 
       currentNode = nextNode;
+
+      // Update call_outcome when reaching a terminal node via fast-match
+      if (TERMINAL_NODES.has(currentNode)) {
+        const outcomeMap = {
+          'TERM_COMPLETE': 'complete',
+          'TERM_NOT_INTERESTED': 'not_interested',
+          'TERM_CALLBACK': 'callback',
+          'TERM_WRONG_PERSON': 'wrong_person',
+          'TERM_NO_REGISTRATION': 'no_registration'
+        };
+        session.call_outcome = outcomeMap[currentNode] || 'completed';
+      }
+
       return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
     }
 
@@ -1080,7 +1109,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     // wait for the result and perform the recursive turn synchronously so the user gets the final answer.
     if (!tts && finalLLMOutput.updates?.kb_query) {
       const query = finalLLMOutput.updates.kb_query;
-      if (options.logger) options.logger.info(`[Chat - RAG] Sync - handling query: ${query} `);
+      if (sessionLogger) sessionLogger.info(`[Chat-RAG] Sync-handling query: ${query}`);
 
       // CRITICAL: Save current turn updates BEFORE recursing, otherwise they are lost
       Object.assign(session, finalLLMOutput.updates);
@@ -1089,22 +1118,28 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (currentNode !== prevNode) markNodeDone(prevNode);
 
       try {
-        const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+        const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
+        // Extract clean text from KB result JSON
+        let kbText = kbRaw;
+        try {
+          const parsed = JSON.parse(kbRaw);
+          kbText = parsed.data || kbRaw;
+        } catch (e) { /* use raw if not JSON */ }
         // Perform recursive turn synchronously, marking as recursive to maintain ID
-        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null, {}, true);
+        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, null, null, {}, true);
         // Important: merge recursive results back to session if they aren't already
         Object.assign(session, recursiveResult.session);
         return recursiveResult;
       } catch (err) {
-        if (options.logger) options.logger.error('[Chat-RAG] Sync KB query failed', err);
+        if (sessionLogger) sessionLogger.error('[Chat-RAG] Sync KB query failed', err);
         // Fallback to the acknowledgment "Main check karke batati hoon"
       }
     }
 
     if (finalLLMOutput.updates && isActiveCallback()) {
       Object.assign(session, finalLLMOutput.updates);
-      if (options.logger && Object.keys(finalLLMOutput.updates).length > 0) {
-        options.logger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
+      if (sessionLogger && Object.keys(finalLLMOutput.updates).length > 0) {
+        sessionLogger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
       }
     }
     if (isActiveCallback()) {
@@ -1115,6 +1150,18 @@ export function createCallSession(callerPhone = '', options = {}) {
     const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
     if (nextNode !== prevNode) markNodeDone(prevNode);
     currentNode = nextNode;
+
+    // Update call_outcome when reaching a terminal node
+    if (TERMINAL_NODES.has(currentNode)) {
+      const outcomeMap = {
+        'TERM_COMPLETE': 'complete',
+        'TERM_NOT_INTERESTED': 'not_interested',
+        'TERM_CALLBACK': 'callback',
+        'TERM_WRONG_PERSON': 'wrong_person',
+        'TERM_NO_REGISTRATION': 'no_registration'
+      };
+      session.call_outcome = outcomeMap[currentNode] || 'completed';
+    }
 
     return { say: finalLLMOutput.say, next_node: nextNode, notes: finalLLMOutput.notes, session: { ...session }, streamedByNode: true };
   }
