@@ -159,11 +159,9 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
 - If user asks a question, set 'kb_query' and answer according to QnA rules.
 
 === INTENT DETECTION ===
-| Intent | Signal | Action |
-|--------|--------|--------|
+| INTERESTED | "yes", "theek hai", "haan" | If pitching, set interest_in_meesho: "yes". If asking about bank, set has_bank_account: "yes". |
+| NOT_INTERESTED | "no", "nahi", "not interested" | If pitching, set next_node: TERM_NOT_INTERESTED. If asking about bank, set has_bank_account: "no". |
 | GIVING_NAME | user provides name | Update 'name_spoken'. |
-| INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
-| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price / items | Capture in 'updates_json'. |
 
