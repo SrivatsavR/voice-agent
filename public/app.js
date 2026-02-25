@@ -394,9 +394,16 @@ function updateVariables(session) {
                 return null;
             }
         },
-        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start', format: (s) => s.listing_start || s.raw_listing_start },
+        {
+            key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start', format: (s) => {
+                const norm = s.listing_start;
+                const raw = s.raw_listing_start;
+                if (norm && raw && norm !== raw) return `${norm} (${raw})`;
+                return norm || raw || null;
+            }
+        },
         { key: 'email', label: 'Email Address', icon: 'mail', fallback: 'raw_email' },
-        { key: 'gstin', label: 'GST/UIN', icon: 'shield-check', fallback: 'raw_gstin' }
+        { key: 'gstin', label: 'GST/UIN', icon: 'shield-check', fallback: 'raw_gstin', format: (s) => s.gstin || s.uin || s.raw_gstin }
     ];
 
     sessionVariables.innerHTML = '';

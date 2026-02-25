@@ -12,7 +12,7 @@ import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 const BASE_VOICE_CONTEXT = `
 IMPORTANT — Voice & ASR Context (apply to every response):
 
-You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho — India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
+You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho — India's fastest-growing e-commerce platform with 21 Cr+ customers and zero commission for sellers.
 
 === LANGUAGE & SPEECH QUALITY ===
 - **DEFAULT LANGUAGE**: Speak in conversational **HINDI** by default.
@@ -148,7 +148,7 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask for interest: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
+  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask for interest: "Meesho par 21 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?". Set 'pitch_delivered': "yes".
   2. If 'pitch_delivered' is "yes" but 'interest_in_meesho' is missing: Interpret any positive response (ack) as interest confirmed. Move directly to the Name question: "Aapka poora naam kya hai?". Set 'interest_in_meesho': "yes".
   3. If Name is known but Bank Account is missing: Acknowledge their name then ask "Kya aapke paas bank account hai?".
 - **IMPORTANT**: The pitch must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
@@ -928,8 +928,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             session.bg_listing_running = 'no';
             const finalUpdates = { bg_listing_running: 'no' };
             if (session.listing_start) {
-              delete session.raw_listing_start;
-              finalUpdates.raw_listing_start = null;
+              // Keep raw_listing_start so UI can show "(raw_text)" alongside normalized date
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             notifyUpdate();
@@ -1286,6 +1285,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       Object.assign(session, finalLLMOutput.updates);
       if (sessionLogger && Object.keys(finalLLMOutput.updates).length > 0) {
         sessionLogger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
+        notifyUpdate(); // Ensure UI syncs on LLM-driven variable capture
       }
     }
     if (isActiveCallback()) {

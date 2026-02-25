@@ -194,10 +194,10 @@ export const normalizeListingDateTool = tool({
 
             if (input.includes('today') || input.includes('aaj') || input.includes('thodi der')) {
                 // Keep current date
-            } else if (input.includes('tomorrow') || input.includes('kal')) {
-                target.setDate(now.getDate() + 1);
-            } else if (input.includes('parso')) {
+            } else if (input.includes('day after') || input.includes('parso')) {
                 target.setDate(now.getDate() + 2);
+            } else if (input.includes('tomorrow') || input.includes('kal') || input.includes('tomm') || input.includes('tmw')) {
+                target.setDate(now.getDate() + 1);
             } else if (input.includes('after') || input.includes('ke baad')) {
                 const match = input.match(/(\d+)/);
                 if (match) {
