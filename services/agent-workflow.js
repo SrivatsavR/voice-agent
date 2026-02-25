@@ -796,6 +796,15 @@ export function createCallSession(callerPhone = '', options = {}) {
           await toolObj.execute(params) :
           await toolObj.invoke({}, JSON.stringify(params));
 
+        // Detect internal framework errors (SDK returns strings starting with this prefix)
+        if (typeof rawResult === 'string' && rawResult.startsWith('An error occurred while running the tool.')) {
+          return JSON.stringify({
+            success: false,
+            error: rawResult,
+            timestamp: Date.now()
+          });
+        }
+
         // If the tool returned an already-stringified standard result, return it as-is 
         // to avoid double JSON encoding.
         if (typeof rawResult === 'string') {
@@ -1073,25 +1082,29 @@ export function createCallSession(callerPhone = '', options = {}) {
           Promise.resolve().then(async () => {
             try {
               const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
-              // Extract clean text from KB result JSON
-              let kbText = kbRaw;
+              let kbText = "";
+              let success = false;
               try {
                 const parsed = JSON.parse(kbRaw);
-                kbText = parsed.data || kbRaw;
-              } catch (e) { /* use raw if not JSON */ }
+                if (parsed.success) {
+                  kbText = parsed.data || "";
+                  success = true;
+                } else {
+                  if (sessionLogger) sessionLogger.warn(`[Background] KB search failed: ${parsed.error}`);
+                }
+              } catch (e) { /* use empty if not JSON */ }
 
-              if (sessionLogger) sessionLogger.withComponent('KnowledgeBase').info(`[Background] KB Results found for: "${query}"`, { info_length: kbText.length });
-
-              if (isActiveCallback()) {
-                // CRITICAL FIX: Clear search active flag BEFORE recursive turn.
-                // This prevents the synchronous part of processTranscript from appending 
-                // "search in progress" instructions that contradict the injected results.
+              if (success && kbText) {
+                if (sessionLogger) sessionLogger.withComponent('KnowledgeBase').info(`[Background] KB Results found for: "${query}"`, { info_length: kbText.length });
+                if (isActiveCallback()) {
+                  session.kb_search_active = false;
+                  notifyUpdate();
+                  await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller, {}, true);
+                }
+              } else {
                 session.kb_search_active = false;
-                notifyUpdate(); // Notify UI that search finished
-
-                // We proceed even if currentProcId moved, because the user might have just said "ok" 
-                // and we still want to deliver the answer.
-                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller, {}, true);
+                notifyUpdate();
+                await processTranscript(`[SYSTEM: Knowledge Base search failed for query: "${query}". Inform the user you couldn't find the info right now.]`, tts, silenceFiller, {}, true);
               }
             } catch (e) {
               if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
@@ -1342,12 +1355,19 @@ export function createCallSession(callerPhone = '', options = {}) {
         session.kb_search_active = true;
         try {
           const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
-          let kbText = kbRaw;
+          let kbText = "";
           try {
             const parsed = JSON.parse(kbRaw);
-            kbText = parsed.data || kbRaw;
-          } catch (e) { }
-          systemPrompts.push(`Knowledge Base Results: ${kbText}`);
+            if (parsed.success) {
+              kbText = parsed.data || "";
+              systemPrompts.push(`Knowledge Base Results: ${kbText}`);
+            } else {
+              if (sessionLogger) sessionLogger.warn(`[Chat-Sync] KB search returned failure: ${parsed.error}`);
+              systemPrompts.push(`Knowledge Base search failed for query: "${query}". Apologize and move on.`);
+            }
+          } catch (e) {
+            systemPrompts.push(`Knowledge Base search failed due to internal error. Apologize and move on.`);
+          }
         } catch (err) {
           if (sessionLogger) sessionLogger.error('[Chat-Sync] KB search failed', err);
         } finally {
