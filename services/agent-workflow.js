@@ -124,9 +124,16 @@ const DATA_INTERPRETATION_CONTEXT = `
 - Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
 - Spelled words: "r-o-h-i-t" or "R O H I T" → "rohit".
 - Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
-- GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase.
+- Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
+- GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase. **CRITICAL**: Alphanumeric must be captured as English characters (A-Z, 0-9).
 - Phone numbers: Normalize to 10 digits if mentioned.
 - Dates: Always normalize relative dates (kal, parso, tomorrow, etc.) to "DD/Month/YYYY" format.
+
+=== ALPHANUMERIC EXTRACTION RULES ===
+- If a user mentions a GST number or Email, they might use a mix of Hindi and English.
+- You MUST prioritize English character extraction for these fields.
+- **CRITICAL**: Use 'updates_json' to capture these fields IMMEDIATELY when heard.
+- Avoid descriptive words; extract only the raw alphanumeric string (e.g., "mera gst 29abc..." -> "29ABC...").
 `;
 
 // ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
@@ -191,7 +198,7 @@ const detailsAgent = new Agent({
 
 === ROUTING ===
   - Stay in NODE_2_DETAILS until all questions are answered('products_sold', 'price_min' / 'raw_price_min', and 'listing_start' / 'raw_listing_start' are collected).
-- Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
+- Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aachi baat hai. Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
   tools: [validatePriceRangeTool, normalizeListingDateTool]
@@ -224,7 +231,7 @@ const contactGstAgent = new Agent({
 
 === ROUTING ===
   - Move to NODE_4_CLOSURE only after BOTH Email and(GST OR UIN) are captured.
-- When transitioning, your 'say' MUST be the bridge question: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+- When transitioning, your 'say' MUST be EXACTLY: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
   - Do NOT use TERM_COMPLETE in Node 3.
     - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
@@ -424,6 +431,7 @@ export function createCallSession(callerPhone = '', options = {}) {
   const session = { ...createDefaultSession(), caller_phone: callerPhone };
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
+  let lastProcessedTranscript = ''; // Track last processed transcript to avoid duplicates
 
   // Store session-level logger so it's accessible from processTranscript
   // without being shadowed by the inner `options` parameter
@@ -676,7 +684,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             };
           } else if (!session.gstin && session.gst_declined !== 'yes') {
             return {
-              updates: { has_gst_number: 'yes' },
+              updates: { gstin_valid: 'yes' }, // Using gstin_valid as a signal to start capture
               say: "Sunke khushi hui! Aapka 15-digit ka GST number kya hai?",
               next_node: 'CONTINUE'
             };
@@ -703,8 +711,16 @@ export function createCallSession(callerPhone = '', options = {}) {
   async function processTranscript(transcript, tts = null, silenceFiller = null, options = {}, isRecursive = false) {
     if (!transcript) return { say: "", next_node: currentNode, session: { ...session } };
 
-    const currentProcId = isRecursive ? currentProcessingId : ++currentProcessingId;
     const cleanTranscript = transcript.trim();
+
+    // Check if we've already processed this exact transcript (e.g. Fast-Match already handled it)
+    if (cleanTranscript === lastProcessedTranscript && !isRecursive) {
+      if (sessionLogger) sessionLogger.info(`[Workflow] Skipping duplicate transcript: ${cleanTranscript}`);
+      return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
+    }
+    lastProcessedTranscript = cleanTranscript;
+
+    const currentProcId = isRecursive ? currentProcessingId : ++currentProcessingId;
     // Early exit if the call is no longer active (WS closed or Twilio stopped)
     if (!isActiveCallback()) {
       if (sessionLogger) sessionLogger.warn('[Workflow] processTranscript called after call ended — aborting');
@@ -791,6 +807,10 @@ export function createCallSession(callerPhone = '', options = {}) {
                   log.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
                   log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: 'yes' } });
                 }
+                if (currentProcId === currentProcessingId && isActiveCallback()) {
+                  // Trigger continuity so agent asks for GST next without waiting for user "confirm"
+                  await processTranscript(`[SYSTEM: Email verified successfully. Proceed to next field.]`, tts, silenceFiller, {}, true);
+                }
               } else if (currentProcId === currentProcessingId) {
                 session.email_valid = 'no';
                 session.email_attempts = (session.email_attempts || 0) + 1;
@@ -834,6 +854,10 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (isActiveCallback()) {
               if (log) log.withComponent('Validation').info('[Background] GST Captured');
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: 'yes', bg_gst_running: 'no' } });
+
+              if (currentProcId === currentProcessingId) {
+                await processTranscript(`[SYSTEM: GST captured successfully. Proceed to closure.]`, tts, silenceFiller, {}, true);
+              }
             }
           } catch (e) {
             console.error(e);
@@ -869,6 +893,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.listing_start = norm.normalized;
               if (log) log.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
+
+              if (currentProcId === currentProcessingId && isActiveCallback()) {
+                await processTranscript(`[SYSTEM: Listing date normalized to ${norm.normalized}.]`, tts, silenceFiller, {}, true);
+              }
             }
           } catch (e) {
             console.error(e);
@@ -915,6 +943,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.price_max = res.price_max;
               if (log) log.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
+
+              if (currentProcId === currentProcessingId && isActiveCallback()) {
+                await processTranscript(`[SYSTEM: Price range validated to ₹${res.price_min}-₹${res.price_max}.]`, tts, silenceFiller, {}, true);
+              }
             }
           } catch (e) {
             console.error(e);
@@ -947,6 +979,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           // VOICE: Fire background transition and recursive turn
           Promise.resolve().then(async () => {
             try {
+              if (silenceFiller) silenceFiller.pause();
               const kbRaw = await runTool(searchKnowledgeBaseTool, { query });
               // Extract clean text from KB result JSON
               let kbText = kbRaw;
@@ -970,6 +1003,8 @@ export function createCallSession(callerPhone = '', options = {}) {
             } catch (e) {
               if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
               session.kb_search_active = false;
+            } finally {
+              if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
             }
           });
         }
@@ -1013,7 +1048,14 @@ export function createCallSession(callerPhone = '', options = {}) {
 
     let userMessage = transcript;
     if (currentNode !== 'NODE_0_WELCOME') {
-      const activeData = Object.fromEntries(Object.entries(session).filter(([k, v]) => k !== 'caller_phone' && v !== '' && v !== null && v !== 0 && (Array.isArray(v) ? v.length > 0 : true)));
+      const activeData = Object.fromEntries(
+        Object.entries(session).filter(([k, v]) =>
+          k !== 'caller_phone' &&
+          v !== '' &&
+          v !== null &&
+          (typeof v === 'number' || (Array.isArray(v) ? v.length > 0 : !!v))
+        )
+      );
       const today = new Date();
       const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const formattedToday = `${today.getDate().toString().padStart(2, '0')} /${monthNames[today.getMonth()]}/${today.getFullYear()} `;

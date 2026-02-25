@@ -482,6 +482,7 @@ wss.on('connection', (ws) => {
   let callSession = null;
   let isActive = true;
   let activeStreamSid = null;
+  let callSid = null; // Track Twilio CallSid for hangups
   let interruptionManager = null;
   let silenceFiller = null;
   let currentProcessingId = 0;
@@ -500,6 +501,7 @@ wss.on('connection', (ws) => {
 
     if (msg.event === 'start') {
       const streamSid = msg.start.streamSid;
+      callSid = msg.start.callSid; // Capture the real CallSid
       const callerPhone = msg.start.customParameters?.caller_phone ?? '';
       activeStreamSid = streamSid;
 
@@ -553,7 +555,9 @@ wss.on('connection', (ws) => {
           if (audioBuffer && (currentNode === 'NODE_3_CONTACT_GST' || transcript.match(/[A-Z0-9]{10,}/i) || transcript.includes('@'))) {
             Promise.resolve().then(async () => {
               try {
-                const burst = await transcribeAudioBurst(audioBuffer, { language: 'hi' }); // Use Hindi (handles English code-switching well)
+                // Use English or Multi for burst correction in Node 3 to capture alphanumeric correctly
+                const burstLang = (currentNode === 'NODE_3_CONTACT_GST') ? 'en' : 'multi';
+                const burst = await transcribeAudioBurst(audioBuffer, { language: burstLang });
                 if (burst?.transcript && burst.transcript.toLowerCase() !== transcript.toLowerCase()) {
                   callLog.withComponent('Validation').info(`[Burst Correction] REST Result: "${burst.transcript}" (Streaming was: "${transcript}")`);
 
@@ -657,6 +661,12 @@ wss.on('connection', (ws) => {
                   callLog.withComponent('Call').info('TTS finished — closing call in 5s');
                   setTimeout(() => {
                     if (ws.readyState === WebSocket.OPEN) ws.close();
+                    // Physically hang up the Twilio call via REST API
+                    if (twilioClient && callSid) {
+                      twilioClient.calls(callSid).update({ status: 'completed' })
+                        .then(() => callLog.info('Twilio call hung up successfully'))
+                        .catch(err => callLog.error('Twilio hangup failed', { error: err.message }));
+                    }
                   }, 5000);
                 }
               }, 500);
@@ -753,6 +763,7 @@ wss.on('connection', (ws) => {
         }
       };
       if (ASR_PROVIDER === 'deepgram') {
+        asrOptions.language = 'multi'; // Default to multilingual for best Hinglish support
         asr = new DeepgramASR(onTranscript, asrOptions);
       } else {
         asr = new ElevenLabsASR(onTranscript, asrOptions);

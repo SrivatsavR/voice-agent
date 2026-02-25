@@ -369,7 +369,15 @@ function updateVariables(session) {
         { key: 'interest_in_meesho', label: 'Joining Interest', icon: 'thumbs-up' },
         { key: 'has_bank_account', label: 'Active Bank Acc?', icon: 'credit-card' },
         { key: 'products_sold', label: 'Product Items', icon: 'package' },
-        { key: 'price_min', label: 'Price Range', icon: 'tag', fallback: 'raw_price_min', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : (s.raw_price_min ? s.raw_price_min : null)) },
+        {
+            key: 'price_min', label: 'Price Range', icon: 'tag', fallback: 'raw_price_min', format: (s) => {
+                const min = s.price_min !== undefined && s.price_min !== null ? s.price_min : s.raw_price_min;
+                const max = s.price_max !== undefined && s.price_max !== null ? s.price_max : s.raw_price_max;
+                if (typeof min === 'number' && typeof max === 'number') return `₹${min}-${max}`;
+                if (typeof min === 'number') return `₹${min}+`;
+                return min || null;
+            }
+        },
         { key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start' },
         { key: 'email', label: 'Email Address', icon: 'mail', fallback: 'raw_email' },
         { key: 'gstin', label: 'GST/UIN', icon: 'shield-check', fallback: 'raw_gstin' }

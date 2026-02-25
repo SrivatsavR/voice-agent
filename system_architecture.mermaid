@@ -1,0 +1,62 @@
+graph TD
+    subgraph "External Providers"
+        Twilio[Twilio Stream & REST API]
+        DeepgramASR[Deepgram Streaming ASR]
+        DeepgramREST[Deepgram REST API]
+        ElevenLabs[ElevenLabs TTS]
+        OpenAI[OpenAI gpt-4o-mini]
+        Pinecone[Pinecone Vector DB]
+    end
+
+    subgraph "Voice Server (Node.js)"
+        Server[server.js]
+        Session[Call Session Manager]
+        Workflow[agent-workflow.js]
+        Filler[SilenceFillerManager]
+        Interruption[InterruptionManager]
+        KB[Vector Search Service]
+    end
+
+    subgraph "Client Dashboard"
+        UI[Web Console]
+        SSE[SSE Live Events Feed]
+    end
+
+    %% Call Lifecycle
+    Twilio -- "1. Incoming Call (CallSid)" --> Server
+    Server -- "2. Media Stream (mulaw)" --> DeepgramASR
+    DeepgramASR -- "3. Multilingual Transcript" --> Server
+    
+    %% Intelligence Flow
+    Server -- "4. Transcript + Session State" --> Workflow
+    Workflow -- "5. RAG Query (if needed)" --> KB
+    KB -- "6. Vector Search" --> Pinecone
+    Pinecone -- "7. Relevant Chunks" --> KB
+    KB -- "8. Context" --> Workflow
+    Workflow -- "9. Prompt + Guardrails" --> OpenAI
+    OpenAI -- "10. JSON Extraction & Reply" --> Workflow
+    
+    %% Burst Correction (Phase 2)
+    Server -- "11. Alphanumeric Burst (Node 3)" --> DeepgramREST
+    DeepgramREST -- "12. English Alphanumeric Correction" --> Server
+    
+    %% Response Delivery
+    Workflow -- "13. Say Phrase" --> Server
+    Server -- "14. Text-to-Speech" --> ElevenLabs
+    ElevenLabs -- "15. Audio Buffer" --> Server
+    Server -- "16. Media Stream" --> Twilio
+    
+    %% Termination (Phase 2)
+    Server -- "17. TERMINAL reached → REST Hangup" --> Twilio
+
+    %% UI Sync
+    Server -- "Real-time Variable Updates" --> SSE
+    Server -- "Background Validation Logs" --> SSE
+    SSE -- "Live Feed" --> UI
+    UI -- "Outbound/Chat Control" --> Server
+
+    %% Guardrails
+    Server -- "Mutual Silence Monitoring" --> Filler
+    Filler -- "Acknowledge/Re-engage" --> Server
+    Server -- "Barge-in Logic" --> Interruption
+    Interruption -- "Mute Agent" --> ElevenLabs

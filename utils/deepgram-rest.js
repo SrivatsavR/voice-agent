@@ -15,7 +15,7 @@ export async function transcribeAudioBurst(buffer, options = {}) {
         model = 'nova-2',
         smart_format = true,
         punctuate = true,
-        language = 'hi' // Default to Hindi for better accuracy (handles English words well)
+        language = 'multi' // Default to multilingual (handles English words/alphanumeric well)
     } = options;
 
     const url = `https://api.deepgram.com/v1/listen?model=${model}&smart_format=${smart_format}&punctuate=${punctuate}&language=${language}&encoding=mulaw&sample_rate=8000`;
