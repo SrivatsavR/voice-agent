@@ -643,6 +643,14 @@ wss.on('connection', (ws) => {
 
             // Just trigger a flush to terminate the generation.
             tts.flush();
+
+            // --- Smart Language Switch (Phase 3) ---
+            // If we just entered Node 4, switch the ASR to multilingual for better Q&A support.
+            // We do this after the bridge TTS starts to hide the reconnection latency.
+            if (next_node === 'NODE_4_CLOSURE' && asr && asr.options.language !== 'multi') {
+              callLog.withComponent('ASR').info('🚀 Entering QnA Phase — switching ASR to Multilingual mode');
+              asr.setLanguage('multi');
+            }
           }
           isProcessingTranscript = false;
 
@@ -763,7 +771,7 @@ wss.on('connection', (ws) => {
         }
       };
       if (ASR_PROVIDER === 'deepgram') {
-        asrOptions.language = 'multi'; // Default to multilingual for best Hinglish support
+        asrOptions.language = 'hi'; // Phase 3: Start in Hindi for maximum onboarding accuracy
         asr = new DeepgramASR(onTranscript, asrOptions);
       } else {
         asr = new ElevenLabsASR(onTranscript, asrOptions);
