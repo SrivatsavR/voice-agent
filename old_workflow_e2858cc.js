@@ -1,18 +1,25 @@
-import { Agent, Runner, withTrace, tool } from '@openai/agents';
+﻿import { Agent, Runner, withTrace, tool } from '@openai/agents';
 import { Logger } from '../utils/logger.js';
 import {
   validateEmailTool,
   normalizeSpokenEmailTool,
+  validateGSTINTool,
+  validatePhoneTool,
   validatePriceRangeTool,
-  normalizeListingDateTool
+  normalizeListingDateTool,
+  validateEmailTool as validateEmail,
+  normalizeSpokenEmailTool as normalizeSpokenEmail,
+  validateGSTINTool as validateGSTIN,
+  validatePriceRangeTool as validatePriceRange,
+  normalizeListingDateTool as normalizeListingDate
 } from '../utils/validators.js';
 import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
-// ─── Core Voice Context (injected into every node) ────────────────────────────
+// ΓöÇΓöÇΓöÇ Core Voice Context (injected into every node) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const BASE_VOICE_CONTEXT = `
-IMPORTANT — Voice & ASR Context (apply to every response):
+IMPORTANT ΓÇö Voice & ASR Context (apply to every response):
 
-You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho — India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
+You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho ΓÇö India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
 
 === LANGUAGE & SPEECH QUALITY ===
 - **DEFAULT LANGUAGE**: Speak in conversational **HINDI** by default.
@@ -35,7 +42,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says " Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -84,46 +91,45 @@ const RESPONSE_SCHEMA = {
   }
 };
 
-// ─── Global Guardrails (injected into every conversational node) ──────────────
+// ΓöÇΓöÇΓöÇ Global Guardrails (injected into every conversational node) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const GLOBAL_GUARDRAILS = `
 === GLOBAL GUARDRAILS ===
 
-── 1. TOPIC FOCUS ──
+ΓöÇΓöÇ 1. TOPIC FOCUS ΓöÇΓöÇ
 Discussion MUST be Meesho seller onboarding only.
 
-── 2. DO NOT COLLECT PHONE NUMBER ──
+ΓöÇΓöÇ 2. DO NOT COLLECT PHONE NUMBER ΓöÇΓöÇ
 NEVER ask for the phone number. We already have it from the call stream.
 
-── 3. LANGUAGE PERSISTENCE ──
+ΓöÇΓöÇ 3. LANGUAGE PERSISTENCE ΓöÇΓöÇ
 Default to simple Hindi. Use English for numbers.
 
-── 4. CONFUSION & CALLBACK ──
+ΓöÇΓöÇ 4. CONFUSION & CALLBACK ΓöÇΓöÇ
 If confused, apologize once. If still confused, route to TERM_CALLBACK.
 If the caller is busy, accommodate immediately and route to TERM_CALLBACK.
 
-── 5. CROSS-NODE EXTRACTION ──
+ΓöÇΓöÇ 5. CROSS-NODE EXTRACTION ΓöÇΓöÇ
 If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates_json' object immediately. 
 Refer to the current session data provided to see what is already captured.
 
-── 6. TRANSITION RULE ──
+ΓöÇΓöÇ 6. TRANSITION RULE ΓöÇΓöÇ
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
 
-── 7. HANDLING QUESTIONS ──
+ΓöÇΓöÇ 7. HANDLING QUESTIONS ΓöÇΓöÇ
 If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
 `;
 
-// ─── Node Specific Contexts ───────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Node Specific Contexts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const DATA_INTERPRETATION_CONTEXT = `
 === NUMBER & DATA INTERPRETATION ===
 - Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
-- Spelled words: "r-o-h-i-t" or "R O H I T" → "rohit".
-- Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
+- Spelled words: "r-o-h-i-t" or "R O H I T" ΓåÆ "rohit".
+- Emails: "at" ΓåÆ @, "dot" ΓåÆ ., "dash" ΓåÆ -, "underscore" ΓåÆ _.
 - GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase.
 - Phone numbers: Normalize to 10 digits if mentioned.
-- Dates: Always normalize relative dates (kal, parso, tomorrow, etc.) to "DD/Month/YYYY" format.
 `;
 
-// ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 1: Name + Interest ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
   instructions: `=== YOUR TASK ===
@@ -132,7 +138,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?") then ask that question.
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par fourteen crore customers hain, aur yahan zero commission aur free logistics ka fayda milta hai.") then ask "Kya aap Meesho par apne products bechna chahte hain?".
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -151,10 +157,10 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [searchKnowledgeBaseTool]
 });
 
-// ─── NODE 2: Business Details ─────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 2: Business Details ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const detailsAgent = new Agent({
   name: "NODE_2_DETAILS",
   instructions: `=== YOUR TASK ===
@@ -176,10 +182,10 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validatePriceRangeTool, normalizeListingDateTool]
+  tools: [validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
-// ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 3: Email + GSTIN ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
@@ -206,10 +212,10 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [searchKnowledgeBaseTool]
 });
 
-// ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 4: QnA & Closure ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
@@ -231,10 +237,10 @@ Thank the user for their time and details, then proactively ask if they have any
 - If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [searchKnowledgeBaseTool]
 });
 
-// ─── Routing Map ──────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Routing Map ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const NODE_AGENTS = {
   // NODE_0_WELCOME: Bypassed directly in getWelcome() to avoid framework overhead
@@ -252,16 +258,14 @@ export const TERMINAL_NODES = new Set([
   'TERM_NO_REGISTRATION'
 ]);
 
-// ─── Default Session State ────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Default Session State ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-const createDefaultSession = () => ({
+const DEFAULT_SESSION = {
   caller_phone: '',
-  uin: '',
-  closure_bridge_delivered: false,
   // Node 1
   name_spoken: '',
-  is_right_person: '',
-  interest_in_meesho: '',
+  is_right_person: 'unknown',
+  interest_in_meesho: 'unknown',
   has_bank_account: '',
   callback_time: '',
   pitch_delivered: false,
@@ -269,47 +273,61 @@ const createDefaultSession = () => ({
   products_sold: [],
   price_min: null,
   price_max: null,
-  raw_price_min: '',
-  raw_price_max: '',
+  switch_speed_days: null,
+  switch_speed_bucket: '',
   listing_start: '',
-  raw_listing_start: '',
   // Node 3
   email: '',
   email_valid: false,
   email_attempts: 0,
-  raw_email: '',
   gstin: '',
   gstin_valid: false,
-  gst_attempts: 0,
-  raw_gstin: '',
   gst_declined: false,
   uin: '',
-  closure_bridge_delivered: false,
+  gst_attempts: 0,
+  pan_number: '',
+  pan_skipped: false,
   // Node 4
-  kb_query: '',
-  call_outcome: 'in_progress',
-  // Internal
+  questions_asked: 0,
+  summary_confirmed: false,
+  call_outcome: '',
+  correction_requested: '',
+  // Progress flags
   node0_done: false,
   node1_done: false,
   node2_done: false,
   node3_done: false,
   node4_done: false,
-});
+};
 
-// ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: Sanitize message content for OpenAI API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function sanitizeMessage(msg) {
-  if (!msg || typeof msg !== 'object') return msg;
-  try {
-    // Force POJO conversion to strip library-internal symbols/fields
-    // This ensures compatibility with the plain OpenAI API expectations.
-    return JSON.parse(JSON.stringify(msg));
-  } catch (e) {
+  if (!msg.content) return msg;
+
+  const role = msg.role;
+  let newContent = msg.content;
+
+  if (typeof newContent === 'string') {
+    // Top-level strings are fine, the SDK converts them
     return msg;
   }
+
+  if (Array.isArray(newContent)) {
+    newContent = newContent.map(item => {
+      if (typeof item === 'string') return item;
+      if (item.type === 'text') {
+        const type = (role === 'assistant') ? 'output_text' : 'input_text';
+        return { ...item, type };
+      }
+      return item;
+    });
+  }
+
+  return { ...msg, content: newContent };
 }
 
-// ─── Helper: Parse agent output ───────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: Parse agent output ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function parseAgentOutput(rawOutput) {
   if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
@@ -366,146 +384,93 @@ function parseAgentOutput(rawOutput) {
   }
 }
 
-// ─── Session Factory ──────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Session Factory ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export function createCallSession(callerPhone = '', options = {}) {
   const conversationHistory = [];
-  const session = { ...createDefaultSession(), caller_phone: callerPhone };
+  const session = { ...DEFAULT_SESSION, caller_phone: callerPhone };
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
 
-  // ── Internal runner ─────────────────────────────────────────────────────
-
-  async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
-    const myProcessingId = currentProcessingId; // Capture current ID to detect aborts
-
-    try {
-      return await withTrace("Reseller Qualification", async () => {
-        // Isolate Runner per turn to prevent cross-talk and race conditions
-        const turnRunner = new Runner({
-          traceMetadata: {
-            __trace_source__: "voice-ai-platform",
-            workflow_id: "wf_meesho_reseller_v3"
-          }
-        });
-
-        // System message is now handled externally/consistently
-        const systemMessage = sanitizeMessage({
-          role: 'system',
-          content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
-        });
-
-        // --- Smart History Slicing (Revised v29) ---
-        // We ensure that we never start history with a 'tool' role.
-        // We also strip library-internal fields to keep it clean for OpenAI.
-        let messages = [...conversationHistory];
-        if (messages.length > 10) {
-          let sliceIdx = messages.length - 10;
-          // Search backwards for a safe starting point (must be 'user' or 'assistant' without pending tool calls)
-          while (sliceIdx < messages.length && (messages[sliceIdx].role === 'tool' || (messages[sliceIdx].role === 'assistant' && messages[sliceIdx].tool_calls))) {
-            sliceIdx++;
-          }
-          messages = messages.slice(sliceIdx);
-        }
-
-        const sanitizedMessages = messages.map(msg => {
-          // Items without a 'role' are Responses API native items (function_call,
-          // function_call_output) — pass through as-is after sanitize.
-          if (!msg.role) return sanitizeMessage(msg);
-
-          switch (msg.role) {
-            case 'system':
-            case 'user':
-              return sanitizeMessage({ role: msg.role, content: msg.content || '' });
-            case 'assistant': {
-              const out = { role: 'assistant', content: msg.content || '' };
-              if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-                out.tool_calls = msg.tool_calls;
-              }
-              return sanitizeMessage(out);
-            }
-            case 'tool':
-              return sanitizeMessage({
-                role: 'tool',
-                content: msg.content || '',
-                tool_call_id: msg.tool_call_id,
-                name: msg.name
-              });
-            default:
-              return sanitizeMessage(msg);
-          }
-        });
-
-        const stream = await turnRunner.run(agent, [systemMessage, ...sanitizedMessages], { stream: true });
-
-        let finalOutputText = "";
-        let sentLength = 0;
-
-        for await (const event of stream) {
-          // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
-          if (myProcessingId !== currentProcessingId) {
-            if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
-            break;
-          }
-
-          // Handle raw string events (non-tool calls)
-          if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
-            finalOutputText += event.data.text;
-          }
-          // Handle @openai/agents v0.0.5 structured json streaming object deltas
-          else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
-            const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
-            if (contentObj && contentObj.text) {
-              finalOutputText = contentObj.text; // the framework accumulates the full string here
-            }
-          }
-          else if (event.type === 'model_text_delta') {
-            finalOutputText += event.data.textDelta || event.data.delta || '';
-          }
-
-          // Try to parse 'say' from whatever we've accumulated so far
-          if (onSayChunk && finalOutputText) {
-            // Look for "say": "..." pattern. Handle opening quote through current end.
-            const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
-            if (sayMatch) {
-              const currentSay = sayMatch[1];
-              // Unescape common JSON characters
-              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
-
-              if (unescaped.length > sentLength) {
-                const chunk = unescaped.substring(sentLength);
-                sentLength = unescaped.length;
-                onSayChunk(chunk);
-              }
-            }
-          }
-        }
-
-        await stream.completed;
-        if (!nodeOptions.skipHistory) {
-          // Sanitize new items before storing.
-          // Filter out items without a 'role' field — these are Responses API internal
-          // items (function_call, function_call_output) that cannot be safely replayed
-          // as chat messages on subsequent turns.
-          const newItems = stream.newItems
-            .map(item => sanitizeMessage(item.rawItem))
-            .filter(item => item && item.role);
-          conversationHistory.push(...newItems);
-        }
-        return stream.finalOutput;
-      });
-    } catch (err) {
-      if (options.logger) options.logger.error('[Workflow] runNode critical failure', err);
-      // Fallback graceful response
-      return {
-        say: "I'm sorry, I'm having a bit of trouble with my system. Can you please tell me that again?",
-        next_node: 'CONTINUE',
-        updates: {}
-      };
+  const runner = new Runner({
+    traceMetadata: {
+      __trace_source__: "voice-ai-platform",
+      workflow_id: "wf_meesho_reseller_v3"
     }
+  });
+
+  // ΓöÇΓöÇ Internal runner ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+  async function runNode(agent, userMessage, onSayChunk) {
+    return await withTrace("Reseller Qualification", async () => {
+      // Create a static System Message to reduce input tokens in instructions
+      const systemMessage = sanitizeMessage({
+        role: 'system',
+        content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
+      });
+
+      if (userMessage) {
+        conversationHistory.push(sanitizeMessage({
+          role: 'user',
+          content: userMessage
+        }));
+      }
+
+      // Limit conversation history to last 10 turns and sanitize
+      const trimmedHistory = conversationHistory.slice(-10).map(sanitizeMessage);
+
+      const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
+
+      let finalOutputText = "";
+      let sentLength = 0;
+
+      for await (const event of stream) {
+        if (!event.type.includes('raw_model')) {
+          console.log(`[Stream Event]`, event.type);
+        }
+
+        // Handle raw string events (non-tool calls)
+        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
+          finalOutputText += event.data.text;
+        }
+        // Handle @openai/agents v0.0.5 structured json streaming object deltas
+        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+          if (contentObj && contentObj.text) {
+            finalOutputText = contentObj.text; // the framework accumulates the full string here
+          }
+        }
+        else if (event.type === 'model_text_delta') {
+          finalOutputText += event.data.textDelta || event.data.delta || '';
+        }
+
+        // Try to parse 'say' from whatever we've accumulated so far
+        if (onSayChunk && finalOutputText) {
+          // Look for "say": "..." pattern. Handle opening quote through current end.
+          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+          if (sayMatch) {
+            const currentSay = sayMatch[1];
+            // Unescape common JSON characters
+            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+            if (unescaped.length > sentLength) {
+              const chunk = unescaped.substring(sentLength);
+              sentLength = unescaped.length;
+              onSayChunk(chunk);
+            }
+          }
+        }
+      }
+
+      await stream.completed;
+      // Sanitize new items before storing
+      const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+      conversationHistory.push(...newItems);
+      return stream.finalOutput;
+    });
   }
 
-  // ── Mark node as done when leaving it ──────────────────────────────────
+  // ΓöÇΓöÇ Mark node as done when leaving it ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   function markNodeDone(nodeName) {
     const match = nodeName.match(/NODE_(\d)/);
@@ -514,7 +479,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
   }
 
-  // ── Public API ──────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Public API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   // Callback to check if stream is still active
   let isActiveCallback = () => true;
@@ -533,21 +498,20 @@ export function createCallSession(callerPhone = '', options = {}) {
   const FAST_MATCH_CONFIG = {
     'NODE_1_NAME_INTEREST': [
       {
-        pattern: /^(mera naam|my name is|main|i am|this is|मेरा नाम|मैं) (.*?)(?: hai| hoon|है|हूं)?$/i,
+        pattern: /^(mera naam|my name is|main|i am|this is|αñ«αÑçαñ░αñ╛ αñ¿αñ╛αñ«|αñ«αÑêαñé) (.*?)(?: hai| hoon|αñ╣αÑê|αñ╣αÑéαñé)?$/i,
         handle: (match, session) => {
-          if (!session) return null;
           const name = match[2].trim();
-          if (!session.interest_in_meesho) {
+          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
             if (session.pitch_delivered) {
               return {
                 updates: { name_spoken: name },
-                say: `Achha, ${name} ji. Toh kya aap Meesho join karna chahte hain?`,
+                say: `Achha, ${name} ji. Toh kya aap Meesho par apne products bechna chahte hain?`,
                 next_node: 'CONTINUE'
               };
             }
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?`,
+              say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur zero logistics charges ka fayda milta hai. Kya aap Meesho par apne products bechna chahte hain?`,
               next_node: 'CONTINUE'
             };
           }
@@ -559,11 +523,10 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ|αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ|αñ£αÑÇ αñ¼αññαñ╛αñçαñÅ|αñ¼αññαñ╛αñçαñÅ|αñ╣αñ╛αñé αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ)$/i,
         handle: (match, session) => {
-          if (!session) return null;
-          if (!session.interest_in_meesho) {
-            // Let the LLM handle "haanji" etc. at node start to ensure pitch is delivered
+          if (!session.interest_in_meesho || session.interest_in_meesho === 'unknown') {
+            // Let the LLM definitively handle "haan" if the pitch was just delivered
             return null;
           } else if (session.name_spoken && !session.has_bank_account) {
             return {
@@ -576,7 +539,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested|नहीं|न|नो|बिल्कुल नहीं)$/i,
+        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested|αñ¿αñ╣αÑÇαñé|αñ¿|αñ¿αÑï|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓ αñ¿αñ╣αÑÇαñé)$/i,
         updates: { interest_in_meesho: 'no' },
         say: "Achha, koi baat nahi. Agar aapka mann badle toh humein zaroor batayiye. Dhanyavad!",
         next_node: 'TERM_NOT_INTERESTED'
@@ -584,7 +547,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     ],
     'NODE_2_DETAILS': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ)$/i,
         handle: (match, session) => {
           return null; // Let LLM extract proper intent if needed
         }
@@ -592,9 +555,8 @@ export function createCallSession(callerPhone = '', options = {}) {
     ],
     'NODE_3_CONTACT_GST': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ|αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ|αñ£αÑÇ αñ¼αññαñ╛αñçαñÅ|αñ¼αññαñ╛αñçαñÅ|αñ╣αñ╛αñé αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ)$/i,
         handle: (match, session) => {
-          if (!session) return null;
           if (!session.email_valid && session.email_attempts === 0) {
             return {
               updates: {},
@@ -616,7 +578,7 @@ export function createCallSession(callerPhone = '', options = {}) {
 
   function checkFastMatch(text) {
     if (!text) return false;
-    const cleanText = text.trim().toLowerCase().replace(/[.,?!|।]/g, '');
+    const cleanText = text.trim().toLowerCase().replace(/[.,?!|αÑñ]/g, '');
     if (FAST_MATCH_CONFIG[currentNode]) {
       for (const entry of FAST_MATCH_CONFIG[currentNode]) {
         if (cleanText.match(entry.pattern)) {
@@ -627,92 +589,48 @@ export function createCallSession(callerPhone = '', options = {}) {
     return false;
   }
 
-  async function processTranscript(transcript, tts = null, silenceFiller = null, options = {}, isRecursive = false) {
-    if (!transcript) return { say: "", next_node: currentNode, session: { ...session } };
-
-    const currentProcId = isRecursive ? currentProcessingId : ++currentProcessingId;
-    const cleanTranscript = transcript.trim();
-    // Early exit if the call is no longer active (WS closed or Twilio stopped)
-    if (!isActiveCallback()) {
-      if (options.logger) options.logger.warn('[Workflow] processTranscript called after call ended — aborting');
-      return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
-    }
-
-    // const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|।]/g, ''); // This line is removed
+  async function processTranscript(transcript, tts = null, silenceFiller = null) {
+    currentProcessingId++;
+    const currentProcId = currentProcessingId;
+    const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|αÑñ]/g, '');
     let fastMatchResult = null;
 
     // --- Helpers ---
     const runTool = async (toolObj, params) => {
-      if (!toolObj) {
-        if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
-        return JSON.stringify({ success: false, error: 'Tool object is undefined', timestamp: Date.now() });
-      }
-
-      try {
-        const rawResult = toolObj.execute ?
-          await toolObj.execute(params) :
-          await toolObj.invoke(params);
-
-        // FORCE JSON - no exceptions
-        const safeResult = {
-          success: true,
-          data: rawResult,
-          timestamp: Date.now()
-        };
-
-        if (options.logger) {
-          options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} executed successfully`);
-        }
-
-        return JSON.stringify(safeResult);
-      } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error:`, err);
-        return JSON.stringify({
-          success: false,
-          error: err.message,
-          timestamp: Date.now()
-        });
-      }
+      if (toolObj.execute) return await toolObj.execute(params);
+      if (typeof toolObj === 'function') return await toolObj(params);
+      throw new Error('Tool object is not executable');
     };
 
     const handleBackgroundTasks = (output) => {
       if (!output || !output.updates) return;
       const updates = output.updates;
-      const currentProcId = currentProcessingId;
-
-      // Silent background scan for tasks (removed debug log per user request)
 
       // 1. Email
       if (updates.raw_email && !session.bg_email_running) {
         session.bg_email_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: true } });
         const candidate = updates.raw_email;
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            const normRes = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
-            const normData = JSON.parse(normRes);
-            const norm = normData.success ? normData.data : null;
+            const normStr = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+            const norm = typeof normStr === 'string' ? JSON.parse(normStr) : normStr;
+            const valStr = await runTool(validateEmailTool, { email: norm.normalized_email });
+            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
 
-            if (norm && norm.normalized_email) {
-              const valRes = await runTool(validateEmailTool, { email: norm.normalized_email });
-              const valData = JSON.parse(valRes);
-
-              if (valData.success && valData.data.valid) {
-                session.email = valData.data.normalized;
-                session.email_valid = true;
-                if (options.logger) {
-                  options.logger.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
-                  options.logger.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: true } });
-                }
-              } else if (currentProcId === currentProcessingId) {
-                session.email_valid = false;
-                session.email_attempts = (session.email_attempts || 0) + 1;
-                if (isActiveCallback()) {
-                  const errorMsg = valData.data?.error || "Invalid format";
-                  if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
-                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid (${errorMsg}). Politely ask the user to repeat the email address.]`, tts, silenceFiller);
-                }
+            if (val?.valid) {
+              session.email = val.normalized;
+              session.email_valid = true;
+              if (options.logger) {
+                options.logger.withComponent('Validation').info('[Background] Email Validated');
+                options.logger.withComponent('Database').info('Saving session updates', { updates: { email: val.normalized, email_valid: true } });
+              }
+            } else if (!val?.valid && currentProcId === currentProcessingId) {
+              session.email_valid = false;
+              session.email_attempts = (session.email_attempts || 0) + 1;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', val);
+                await processTranscript(`[SYSTEM: Email "${candidate}" is invalid: ${val ? val.error : 'format error'}. Politely ask the user to correct it.]`, tts, silenceFiller);
               }
             }
           } catch (e) {
@@ -723,12 +641,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_email_running = false;
-            const finalUpdates = { bg_email_running: false };
-            if (session.email) {
+            if (session.email_valid) {
               delete session.raw_email;
-              finalUpdates.raw_email = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
           }
         });
@@ -741,13 +656,23 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            // Removal of GST Validation as per user request (GST TRUST RULE)
-            const normalized = candidate.replace(/\s+/g, '').toUpperCase();
-            session.gstin = normalized;
-            session.gstin_valid = true;
-            if (isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Captured');
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
+            const valStr = await runTool(validateGSTINTool, { gstin: candidate });
+            const val = typeof valStr === 'string' ? JSON.parse(valStr) : valStr;
+
+            if (val?.valid && currentProcId === currentProcessingId) {
+              session.gstin = val.normalized;
+              session.gstin_valid = true;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Validated');
+                if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: val.normalized, gstin_valid: true } });
+              }
+            } else if (!val?.valid && currentProcId === currentProcessingId) {
+              session.gstin_valid = false;
+              session.gst_attempts = (session.gst_attempts || 0) + 1;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] GST Invalid', val);
+                await processTranscript(`[SYSTEM: GST "${candidate}" is invalid: ${val ? val.error : 'format error'}. Ask the user for the correct 15-digit GST number.]`, tts, silenceFiller);
+              }
             }
           } catch (e) {
             console.error(e);
@@ -768,21 +693,16 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 3. Listing Date Normalization
       if (updates.raw_listing_start && !session.bg_listing_running) {
         session.bg_listing_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: true } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
             const todayISO = new Date().toISOString().split('T')[0];
-            const rawResponse = await runTool(normalizeListingDateTool, {
-              spoken_date: candidate,
-              current_date_iso: new Date().toISOString().split('T')[0]
-            });
-            const response = JSON.parse(rawResponse);
-            const norm = response.success ? response.data : null;
-            if (norm && norm.valid && norm.normalized) {
-              session.listing_start = norm.normalized;
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
+            const resStr = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
+            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
+            if (res?.valid) {
+              session.listing_start = res.normalized;
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: res.normalized } });
             }
           } catch (e) {
             console.error(e);
@@ -792,12 +712,9 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_listing_running = false;
-            const finalUpdates = { bg_listing_running: false };
             if (session.listing_start) {
               delete session.raw_listing_start;
-              finalUpdates.raw_listing_start = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -805,7 +722,6 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 4. Price Range Validation
       if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
         session.bg_price_running = true;
-        if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: true } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
         let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
@@ -816,13 +732,14 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (isNaN(pMin) || isNaN(pMax)) {
               if (options.logger) options.logger.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
+                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, Γé╣100 se Γé╣200 tak?"]`, tts, silenceFiller);
               }
               return;
             }
 
-            const res = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
-            if (res && typeof res === 'object' && res.valid) {
+            const resStr = await runTool(validatePriceRangeTool, { price_min: pMin, price_max: pMax });
+            const res = typeof resStr === 'string' ? JSON.parse(resStr) : resStr;
+            if (res?.valid) {
               session.price_min = res.price_min;
               session.price_max = res.price_max;
               if (options.logger) options.logger.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
@@ -836,14 +753,10 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
           } finally {
             session.bg_price_running = false;
-            const finalUpdates = { bg_price_running: false };
             if (session.price_min && !isNaN(parseFloat(session.price_min))) {
               delete session.raw_price_min;
               delete session.raw_price_max;
-              finalUpdates.raw_price_min = null;
-              finalUpdates.raw_price_max = null;
             }
-            if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
           }
         });
       }
@@ -852,21 +765,18 @@ export function createCallSession(callerPhone = '', options = {}) {
       if (updates.kb_query) {
         const query = updates.kb_query;
         delete updates.kb_query;
-        delete session.kb_query; // Clear from session to prevent loops
-        if (tts) {
-          // VOICE: Fire background transition and recursive turn
-          Promise.resolve().then(async () => {
-            try {
-              const kbResult = await runTool(searchKnowledgeBaseTool, { query });
-              if (isActiveCallback() && currentProcId === currentProcessingId) {
-                if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
-                await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
-              }
-            } catch (e) {
-              if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
+        Promise.resolve().then(async () => {
+          try {
+            const kbResult = await runTool(searchKnowledgeBaseTool, { query });
+            if (isActiveCallback() && currentProcId === currentProcessingId) {
+              if (options.logger) options.logger.info(`[KnowledgeBase] Answer Found for: ${query}`);
+              await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, tts, silenceFiller);
             }
-          });
-        }
+          } catch (e) {
+            console.error(e);
+            if (options.logger) options.logger.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
+          }
+        });
       }
     };
 
@@ -877,6 +787,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         if (match) {
           // Rule: Never end conversation based on regex
           if (entry.next_node && entry.next_node.startsWith('TERM_')) continue;
+
           fastMatchResult = typeof entry.handle === 'function' ? entry.handle(match, session) : entry;
           if (!fastMatchResult) continue; // fallback to LLM if handle rejected it
 
@@ -894,67 +805,37 @@ export function createCallSession(callerPhone = '', options = {}) {
     const agent = NODE_AGENTS[currentNode];
     if (!agent) {
       if (TERMINAL_NODES.has(currentNode)) {
-        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session } };
+        return { say: "", next_node: currentNode, session: { ...session } };
       }
-      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session } };
+      return { say: "Samay dene ke liye dhanyavad. Alvida!", next_node: 'TERM_COMPLETE', session: { ...session } };
     }
 
     let userMessage = transcript;
     if (currentNode !== 'NODE_0_WELCOME') {
       const activeData = Object.fromEntries(Object.entries(session).filter(([k, v]) => k !== 'caller_phone' && v !== '' && v !== null && v !== 0 && (Array.isArray(v) ? v.length > 0 : true)));
-      const today = new Date();
-      const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-      const formattedToday = `${today.getDate().toString().padStart(2, '0')}/${monthNames[today.getMonth()]}/${today.getFullYear()}`;
-      userMessage = `${transcript}\n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
+      userMessage = `${transcript}\n\n[SYSTEM: Date: ${new Date().toISOString().split('T')[0]}, Session: ${JSON.stringify(activeData)}]`;
     }
-
-    // PUSH USER MESSAGE TO HISTORY ONCE
-    conversationHistory.push(sanitizeMessage({
-      role: 'user',
-      content: userMessage
-    }));
 
     let streamedCount = 0;
 
     const llmPromise = (async () => {
       try {
         let ttsBuffer = "";
-        let firstChunkLogged = false;
-        let ttsFirstSentLogged = false;
-        const llmStartTime = performance.now();
         const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
           return await runNode(agent, userMessage, (chunk) => {
-            if (!firstChunkLogged) {
-              firstChunkLogged = true;
-              if (options.logger) {
-                options.logger.withComponent('Timing').info('LLM first say chunk', {
-                  ttft_ms: Math.round(performance.now() - llmStartTime),
-                  chunk_preview: chunk.substring(0, 40)
-                });
-              }
-            }
             if (!fastMatchResult && tts && isActiveCallback()) {
               streamedCount += chunk.length;
               ttsBuffer += chunk;
-              if (/[.,?!|।, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
-                const bIdx = ttsBuffer.search(/[.,?!|।,]/) + 1 || ttsBuffer.length;
+              if (/[.,?!|αÑñ, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
+                const bIdx = ttsBuffer.search(/[.,?!|αÑñ,]/) + 1 || ttsBuffer.length;
                 if (bIdx > 0 || ttsBuffer.split(/\s+/).length >= 6) {
                   const toSendArr = ttsBuffer.substring(0, bIdx || ttsBuffer.length);
                   tts.sendText(toSendArr);
-                  if (!ttsFirstSentLogged) {
-                    ttsFirstSentLogged = true;
-                    if (options.logger) {
-                      options.logger.withComponent('Timing').info('TTS first text sent', {
-                        time_since_llm_start_ms: Math.round(performance.now() - llmStartTime),
-                        text_preview: toSendArr.substring(0, 40)
-                      });
-                    }
-                  }
                   ttsBuffer = ttsBuffer.substring(bIdx || ttsBuffer.length);
                 }
               }
             }
-          }, { skipHistory: !!fastMatchResult });
+          });
         });
         if (ttsBuffer.trim() && !fastMatchResult && tts && isActiveCallback()) {
           tts.sendText(ttsBuffer);
@@ -984,29 +865,11 @@ export function createCallSession(callerPhone = '', options = {}) {
         const actN = (actual.updates?.interest_in_meesho === 'no' || actual.updates?.has_bank_account === 'no');
         const termC = (actual.next_node && actual.next_node.startsWith('TERM_'));
 
-        // Name check: Fuzzy comparison to avoid conflicts on case or language script differences
-        let nameMismatch = false;
-        if (fastMatchResult.updates?.name_spoken && actual.updates?.name_spoken) {
-          const name1 = fastMatchResult.updates.name_spoken.toLowerCase().trim();
-          const name2 = actual.updates.name_spoken.toLowerCase().trim();
-
-          // Simple heuristic: If one is a substring of another or they are equal, it's not a mismatch
-          // This avoids conflict when LLM refines "अमृता" to "Amrita" or adding a last name.
-          // Since they are from the same recording, we trust the LLM more but don't want to apologize if they are "close"
-          if (name1 !== name2) {
-            // If both are different scripts (one has non-ascii, other is ascii), we might assume they are the same if the turn was the same
-            const isHindi = (str) => /[\u0900-\u097F]/.test(str);
-            if (isHindi(name1) !== isHindi(name2)) {
-              // If script differs, we don't treat it as a "mismatch" that needs an apology, we just prefer the LLM's version.
-              nameMismatch = false;
-            } else {
-              nameMismatch = true;
-            }
-          }
-        }
+        // Name check
+        const nameMismatch = fastMatchResult.updates?.name_spoken && actual.updates?.name_spoken && fastMatchResult.updates.name_spoken !== actual.updates.name_spoken;
 
         if ((predY && actN) || termC || nameMismatch) {
-          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}, termC=${termC}`);
+          if (options.logger) options.logger.warn(`[Conflict] LLM override. nameMismatch=${nameMismatch}`);
           if (isActiveCallback()) {
             tts?.sendText("Maaf kijiyega, maine shayad galat suna. " + actual.say);
             Object.assign(session, actual.updates);
@@ -1015,7 +878,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
-        } else if (isActiveCallback()) {
+        } else {
           Object.assign(session, actual.updates);
           if (options.logger && Object.keys(actual.updates || {}).length > 0) {
             options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
@@ -1025,26 +888,12 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       const nextNode = fastMatchResult.next_node === 'CONTINUE' ? currentNode : fastMatchResult.next_node;
       if (nextNode !== currentNode) markNodeDone(currentNode);
-
-      const updates = fastMatchResult.updates || {};
-      Object.assign(session, updates);
-
-      // Pushing to history for continuity
-      conversationHistory.push(sanitizeMessage({
-        role: 'assistant',
-        content: JSON.stringify({
-          say: fastMatchResult.say,
-          updates_json: JSON.stringify(updates),
-          next_node: nextNode,
-          notes: 'Fast-match'
-        })
-      }));
-
-      if (options.logger && Object.keys(updates).length > 0) {
-        options.logger.withComponent('Database').info('Saving session updates', { updates });
+      currentNode = nextNode;
+      Object.assign(session, fastMatchResult.updates);
+      if (options.logger && Object.keys(fastMatchResult.updates || {}).length > 0) {
+        options.logger.withComponent('Database').info('Saving session updates', { updates: fastMatchResult.updates });
       }
 
-      currentNode = nextNode;
       return { say: fastMatchResult.say, next_node: nextNode, notes: 'Fast-match', session: { ...session }, streamedByNode: true };
     }
 
@@ -1052,40 +901,13 @@ export function createCallSession(callerPhone = '', options = {}) {
     const finalLLMOutput = await llmPromise;
     if (!finalLLMOutput) return { say: "Kripya phir se kahiye?", next_node: currentNode, session: { ...session }, streamedByNode: false };
 
-    // Chat-specific RAG Handling: If KB query is requested and we are in chat mode (no tts),
-    // wait for the result and perform the recursive turn synchronously so the user gets the final answer.
-    if (!tts && finalLLMOutput.updates?.kb_query) {
-      const query = finalLLMOutput.updates.kb_query;
-      if (options.logger) options.logger.info(`[Chat-RAG] Sync-handling query: ${query}`);
-
-      // CRITICAL: Save current turn updates BEFORE recursing, otherwise they are lost
-      Object.assign(session, finalLLMOutput.updates);
-      const prevNode = currentNode;
-      currentNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
-      if (currentNode !== prevNode) markNodeDone(prevNode);
-
-      try {
-        const kbResult = await runTool(searchKnowledgeBaseTool, { query });
-        // Perform recursive turn synchronously, marking as recursive to maintain ID
-        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null, {}, true);
-        // Important: merge recursive results back to session if they aren't already
-        Object.assign(session, recursiveResult.session);
-        return recursiveResult;
-      } catch (err) {
-        if (options.logger) options.logger.error('[Chat-RAG] Sync KB query failed', err);
-        // Fallback to the acknowledgment "Main check karke batati hoon"
-      }
-    }
-
-    if (finalLLMOutput.updates && isActiveCallback()) {
+    if (finalLLMOutput.updates) {
       Object.assign(session, finalLLMOutput.updates);
       if (options.logger && Object.keys(finalLLMOutput.updates).length > 0) {
         options.logger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
       }
     }
-    if (isActiveCallback()) {
-      handleBackgroundTasks(finalLLMOutput);
-    }
+    handleBackgroundTasks(finalLLMOutput);
 
     const prevNode = currentNode;
     const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
@@ -1101,7 +923,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     setIsActiveCallback,
     checkFastMatch,
     getCurrentNode: () => currentNode,
-    getSession: () => ({ ...session, transcript: conversationHistory }),
+    getSession: () => ({ ...session }),
     isTerminal: () => TERMINAL_NODES.has(currentNode),
   };
 }

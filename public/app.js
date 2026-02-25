@@ -69,6 +69,15 @@ function handleLogEntry(entry) {
     if (role) {
         let txt = msg;
         if (txt.startsWith('Welcome: ')) txt = txt.replace('Welcome: ', '');
+
+        // Handle raw JSON output from agent logs
+        if (txt.startsWith('{') && txt.includes('"say"')) {
+            try {
+                const parsed = JSON.parse(txt);
+                txt = parsed.say || txt;
+            } catch (e) { }
+        }
+
         addMessage(role, txt);
     }
 
@@ -320,7 +329,7 @@ function updateVariables(session) {
         let displayVal = isSyncing ? 'Syncing...' : '--';
         if (isCaptured) {
             const rawVal = Array.isArray(val) ? val[0] : val;
-            displayVal = rawVal.toString().length > 15 ? rawVal.toString().substring(0, 13) + '..' : rawVal;
+            displayVal = rawVal.toString().length > 20 ? rawVal.toString().substring(0, 18) + '..' : rawVal;
         }
 
         div.innerHTML = `

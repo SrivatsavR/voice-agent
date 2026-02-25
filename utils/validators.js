@@ -51,7 +51,7 @@ export const validateEmailTool = tool({
             if (!email) return JSON.stringify({ success: false, error: "No email provided to validate.", timestamp: Date.now() });
             const normalized = email.trim().toLowerCase();
 
-            // RFC 5322 simplified email regex
+            // Standard robust email regex
             const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
             const valid = emailRegex.test(normalized);
 

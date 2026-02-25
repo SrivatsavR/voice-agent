@@ -1,4 +1,4 @@
-import { Agent, Runner, withTrace, tool } from '@openai/agents';
+﻿import { Agent, Runner, withTrace, tool } from '@openai/agents';
 import { Logger } from '../utils/logger.js';
 import {
   validateEmailTool,
@@ -8,11 +8,11 @@ import {
 } from '../utils/validators.js';
 import { searchKnowledgeBaseTool } from '../utils/vector-search.js';
 
-// ─── Core Voice Context (injected into every node) ────────────────────────────
+// ΓöÇΓöÇΓöÇ Core Voice Context (injected into every node) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const BASE_VOICE_CONTEXT = `
-IMPORTANT — Voice & ASR Context (apply to every response):
+IMPORTANT ΓÇö Voice & ASR Context (apply to every response):
 
-You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho — India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
+You are a Meesho Reseller Onboarding Specialist on an outbound phone call. You represent Meesho ΓÇö India's fastest-growing e-commerce platform with 14 Cr+ customers and zero commission for sellers.
 
 === LANGUAGE & SPEECH QUALITY ===
 - **DEFAULT LANGUAGE**: Speak in conversational **HINDI** by default.
@@ -35,7 +35,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - Warm and friendly, like a helpful assistant.
 - 1-2 sentences max per response.
 - Ask ONLY ONE question at a time.
-- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says " Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", etc., they are listening. DO NOT assume they are interested. Deliver the pitch and ask "Kya aap Meesho par products bechna chahte hain?".
+- **ACKNOWLEDGE ACKNOWLEDGMENTS**: If the user says "Haan ji boliye", "Ji bataiye", "Yes please", "Tell me", "Haanji", etc. at the start of the call, they are just acknowledging they are listening. DO NOT assume they are interested. You MUST still deliver the full pitch ("Meesho par fourteen crore...") before asking if they want to sell.
 
 === MEESHO CONTEXT ===
 - Zero commission, zero penalty. Sellers keep 100% profit.
@@ -43,7 +43,7 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
 - **CHECK CONTEXT**: Check [SYSTEM: Current session variables] before every response. Do NOT ask for information that is already present.
 - **PROACTIVE CAPTURE**: If the user provides ANY information (name, items, price, email, GST) even if you didn't ask for it, you MUST capture it in the "updates_json" object immediately and acknowledge it naturally.
 - **CRISP HINDI**: Use short, direct questions. Avoid "Aapka", "Jaan sakte hain", etc. if not needed.
-  - "Naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
+  - "Aapka poora naam kya hai?" instead of "Kya main aapka naam jaan sakta hoon?"
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === DATA TYPES FOR UPDATES_JSON ===
@@ -84,46 +84,51 @@ const RESPONSE_SCHEMA = {
   }
 };
 
-// ─── Global Guardrails (injected into every conversational node) ──────────────
+// ΓöÇΓöÇΓöÇ Global Guardrails (injected into every conversational node) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const GLOBAL_GUARDRAILS = `
 === GLOBAL GUARDRAILS ===
 
-── 1. TOPIC FOCUS ──
+ΓöÇΓöÇ 1. TOPIC FOCUS ΓöÇΓöÇ
 Discussion MUST be Meesho seller onboarding only.
 
-── 2. DO NOT COLLECT PHONE NUMBER ──
+ΓöÇΓöÇ 2. DO NOT COLLECT PHONE NUMBER ΓöÇΓöÇ
 NEVER ask for the phone number. We already have it from the call stream.
 
-── 3. LANGUAGE PERSISTENCE ──
+ΓöÇΓöÇ 3. LANGUAGE PERSISTENCE ΓöÇΓöÇ
 Default to simple Hindi. Use English for numbers.
 
-── 4. CONFUSION & CALLBACK ──
+ΓöÇΓöÇ 4. CONFUSION & CALLBACK ΓöÇΓöÇ
 If confused, apologize once. If still confused, route to TERM_CALLBACK.
 If the caller is busy, accommodate immediately and route to TERM_CALLBACK.
 
-── 5. CROSS-NODE EXTRACTION ──
+ΓöÇΓöÇ 5. CROSS-NODE EXTRACTION ΓöÇΓöÇ
 If the user provides information for a future step (e.g., they mention price while giving their name, or mention GST while describing products), you MUST capture that information in the 'updates_json' object immediately. 
 Refer to the current session data provided to see what is already captured.
 
-── 6. TRANSITION RULE ──
+ΓöÇΓöÇ 6. TRANSITION RULE ΓöÇΓöÇ
 When you are about to move to the next node (next_node), your "say" field MUST contain the first question of that next node. Do NOT just say "Let's move to the next step".
 
-── 7. HANDLING QUESTIONS ──
-If the user asks a question about Meesho (e.g., benefits, fees, process, or T&C), you MUST set 'kb_query' in your 'updates_json' to their question. Acknowledge that you are checking, e.g., "Main check karke batati hoon." The system will provide the answer in the next turn.
+ΓöÇΓöÇ 7. HANDLING QUESTIONS ΓöÇΓöÇ
+If the caller/user asks a question about Meesho (benefits, commission, shipping, T&C, etc.), you MUST follow this protocol:
+- If you DON'T see [SYSTEM: Knowledge Base Results] in the history: Set 'kb_query' in your 'updates_json' to the question and say exactly "Zaroor, main check karke batati hoon."
+- If you DO see [SYSTEM: Knowledge Base Results] in the latest user message: Synthesize a friendly, crisp answer in simple Hindi/Hinglish using ONLY that provided context. 
+- PROMPT PRIORITY: Answering the user's question from KB results is higher priority than asking for their name/items.
+- ALWAYS end every answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+- NEVER use your own training data for facts about Meesho if they contradict the KB results.
 `;
 
-// ─── Node Specific Contexts ───────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Node Specific Contexts ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const DATA_INTERPRETATION_CONTEXT = `
 === NUMBER & DATA INTERPRETATION ===
 - Spoken numbers: "two nine nine" = 299, "nine hundred ninety-nine" = 999, "panch sau" = 500, "ek hazaar" = 1000.
-- Spelled words: "r-o-h-i-t" or "R O H I T" → "rohit".
-- Emails: "at" → @, "dot" → ., "dash" → -, "underscore" → _.
+- Spelled words: "r-o-h-i-t" or "R O H I T" ΓåÆ "rohit".
+- Emails: "at" ΓåÆ @, "dot" ΓåÆ ., "dash" ΓåÆ -, "underscore" ΓåÆ _.
 - GSTIN: Capture 15-character alphanumeric GSTINs. Remove spaces and uppercase.
 - Phone numbers: Normalize to 10 digits if mentioned.
 - Dates: Always normalize relative dates (kal, parso, tomorrow, etc.) to "DD/Month/YYYY" format.
 `;
 
-// ─── NODE 1: Name + Interest ──────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 1: Name + Interest ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const nameInterestAgent = new Agent({
   name: "NODE_1_NAME_INTEREST",
   instructions: `=== YOUR TASK ===
@@ -132,7 +137,8 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?") then ask that question.
+  1. If 'interest_in_meesho' is not "yes": You MUST deliver the pitch: "Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur free delivery ka fayda milta hai." THEN ask "Kya aap Meesho par apne products bechna chahte hain?".
+     - **CRITICAL**: Deliver this FULL pitch even if the user just says "Hi", "Hello", or "Haanji" in their first response. Do NOT set interest_in_meesho until they confirm after hearing the pitch.
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -140,8 +146,9 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 | Intent | Signal | Action |
 |--------|--------|--------|
 | GIVING_NAME | user provides name | Update 'name_spoken'. |
-| INTERESTED | "yes", "theek hai", "haan", "interested", "sure" | Set interest_in_meesho: "yes". |
-| NOT INTERESTED | "no", "nahi", "not interested" | Set next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
+| INTERESTED | "yes", "theek hai", "haan", "sure", "bechna chahta hoon" | Set interest_in_meesho: "yes". |
+| ACKNOWLEDGEMENT | "haanji", "ji", "bataiye" (before pitch) | Treat as "Hi". Do NOT set interest_in_meesho. Deliver Pitch. |
+| NOT INTERESTED | "no", "nahi", "not interested" | Set interest_in_meesho: "no", next_node: TERM_NOT_INTERESTED. Say: "Koi baat nahi, Meesho se judne ke liye dhanyavad. Have a great day!" |
 | BUSY | "call later", "busy" | Confirm time, set next_node: TERM_CALLBACK. |
 | EXTRA INFO | user gives price/items | Capture in 'updates_json'. |
 
@@ -151,10 +158,10 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 - Every 'say' MUST end with a question mark.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
-// ─── NODE 2: Business Details ─────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 2: Business Details ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const detailsAgent = new Agent({
   name: "NODE_2_DETAILS",
   instructions: `=== YOUR TASK ===
@@ -164,7 +171,7 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 1. **Items**: If 'products_sold' is empty, ask: "Achha, toh aap kis tarah ke items bechte hain?"
 2. **Price**: If 'price_min' is missing AND 'raw_price_min' is missing, ask: "Aur in items ki price range kya rehti hai?". If 'raw_price_min' is present but looks like text, ask for numerical confirmation.
 3. **Speed**: If 'listing_start' is missing AND 'raw_listing_start' is missing, ask: "Aap kabse meesho pey list karna start karna chahte hai?"
-   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said.
+   - When they answer, set 'raw_listing_start' in 'updates_json' to EXACTLY what they said. NEVER attempt to guess or set 'listing_start' directly; the system will normalize it from 'raw_listing_start'.
 
 === RULES ===
 - EVERY 'say' must end with a question mark.
@@ -176,65 +183,77 @@ Collect business details. **CHECK SYSTEM CONTEXT**: If the user already mentione
 - Once done, set next_node: NODE_3_CONTACT_GST and your 'say' MUST contain the first question: "Aapka email address kya hai?"`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: [validatePriceRangeTool, normalizeListingDateTool]
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
-// ─── NODE 3: Email + GSTIN ────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 3: Email + GSTIN ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const contactGstAgent = new Agent({
   name: "NODE_3_CONTACT_GST",
   instructions: `=== YOUR TASK ===
-Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already provided in earlier nodes, do NOT ask for them. Skip to the next missing field or finish.
+Collect email and GST/Enrollment ID. **CHECK SYSTEM CONTEXT**: If they already gave it, skip.
 
 === QUESTION FLOW ===
-1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
-2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
-3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
+1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Aapka email address kya hai?"
+2. **GST/UIN**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'uin' is missing AND 'gst_declined' is not true:
+   - Ask: "Kya aapke paas GST number hai? Agar nahi hai toh aap Enrollment ID or UIN bhi de sakte hain."
+
+=== GST TRUST RULE ===
+- NEVER reject or validate the GST number format yourself. 
+- If the user provides any alphanumeric string for GST, capture it as 'raw_gstin' in your 'updates_json' immediately.
+- Do NOT ask the user to repeat the GST or tell them it looks "invalid". Trust whatever they say.
+
+3. **TRANSITION PROTOCOL**: Once Email and (GST OR UIN) are captured, you MUST move to NODE_4_CLOSURE. 
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
 |--------|--------|--------|
-| GIVING_EMAIL | user provides email | Say "Ek minute." Set 'raw_email' in 'updates_json'. |
-| HAS_GST | "yes", "ha", "uh-huh", "i have it" | Say "Kripya apna 15-digit GST number bataye." |
-| GIVING_GST | user provides GST | Set 'raw_gstin' in 'updates_json'. |
-| NO_GST | "don't have gst", "no", "nahi hai" | Set 'gst_declined': true in 'updates_json'. Ask for UIN/Enrollment ID. |
-| GIVING_UIN | user provides UIN/Enrollment ID | Update 'uin' in 'updates_json', move to Node 4. |
-| NO_UIN | "don't have it", "no" | Set next_node: TERM_NO_REGISTRATION. Say: "Maaf kijiyega, bina GST ya Enrollment ID ke hum registration aage nahi badha sakte. Samay dene ke liye dhanyavad!" |
+| GIVING_EMAIL | User provides email | Set 'raw_email'. |
+| GIVING_GST | User provides 15-char GST | Set 'raw_gstin', move to NODE_4_CLOSURE. |
+| HAS_GST | "Yes", "I have it" | Ask "Aapka GST number bataye?". |
+| NO_GST | "No", "Don't have it" | Set 'gst_declined': true, ask for Enrollment ID. |
+| GIVING_UIN | User provides Enrollment ID/UIN | Set 'uin', move to NODE_4_CLOSURE. |
 
-=== ROUTING ===
+=== RULES ===
+- If the user gives their GST number directly when you ask "Do you have it?", capture it immediately and move to Node 4.
+- Do NOT repeat questions if data is in system context.
 - Stay in NODE_3 until Email and (GST OR UIN) are captured.
-- Move to NODE_4_CLOSURE naturally once done. Your 'say' MUST be the first question of Node 4.
-- Every 'say' MUST end with a question mark.`,
+- **NEVER use terminal nodes** (TERM_*) from this node. Always route to NODE_4_CLOSURE for the final wrap-up.
+- Move to NODE_4_CLOSURE naturally. Your 'say' MUST start with the bridge: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?". Set 'closure_bridge_delivered': true in updates_json.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
-// ─── NODE 4: QnA & Closure ────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ NODE 4: QnA & Closure ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 const closureAgent = new Agent({
   name: "NODE_4_CLOSURE",
   instructions: `=== YOUR TASK ===
 Thank the user for their time and details, then proactively ask if they have any questions about Meesho (benefits, commission, shipping, etc.).
 
 === FLOW ===
-1. **Initial Closing**: Thank the user for sharing their details. Inform them about the WhatsApp link for verification. 
-   Say: "Details share karne ke liye bahut dhanyavad. Hamari team aapko ek WhatsApp link bhejegi documents upload karne ke liye. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
-2. **Handle Questions**: If the user asks a question, you MUST set 'kb_query' in 'updates_json' to their question.
-   - Reply with: "Zaroor, main check karke batati hoon." 
-   - Wait for the system to provide the Knowledge Base info in the next turn.
-3. **Handle No Questions / Post-Answer**: If the user says they have no questions (e.g. "no", "nahi", "nothing", "that's it", "theek hai"), or if you have just answered their questions and they are satisfied:
+1. **Initial Closing**: If 'closure_bridge_delivered' is not true, inform the user about the WhatsApp link FIRST.
+   Say: "Hamari team aapko ek WhatsApp link bhejegi documents verify karne ke liye. Details share karne ke liye bahut dhanyavad. Kya aapko Meesho ke baare mein kuch aur jaanna hai?"
+   Set 'closure_bridge_delivered': true in 'updates_json'.
+2. **Handle Questions**:
+   - **Case A: New Question**: If the user asks a question and you haven't checked the KB yet, set 'kb_query' in 'updates_json' to their question and say: "Main check karke batati hoon."
+   - **Case B: Answer Available**: If you see '[SYSTEM: Knowledge Base Results]' in the message history, synthesize the answer from that context. Speak in simple Hinglish. 
+   - **ALWAYS** end the answer with the bridge: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+3. **Handle No Questions / Post-Answer**: ONLY if the user explicitly says they have no MORE questions or wants to end the call (e.g. "no more", "nahi chahiye", "goodbye", "bas itna hi", "bas"):
    - Final Say: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
    - Set "next_node": "TERM_COMPLETE".
 
-=== RULES ===
-- NEVER end the call immediately after taking details. Always ask "Kya aapko kuch aur jaanna hai?".
-- Only use "TERM_COMPLETE" when the user confirms they are done or have no more questions.
-- If they ask multiple questions, repeat the process: set 'kb_query', acknowledge, and then answer in the next turn.`,
+=== CRITICAL TERMINATION GUARDS ===
+- **DO NOT** use TERM_COMPLETE if the user says "theek hai", "okay", "ji", or "hmm". These are continuations. Instead, ask: "Kya aap Meesho ke baare mein aur kuch jaanna chahte hain?"
+- **DO NOT** use TERM_COMPLETE until you have explicitly asked "Kya aap Meesho ke baare mein kuch aur jaanna hai?" and received a clear negative response.
+- NEVER ask if the user is interested in Meesho again.
+- DO NOT repeat the onboarding pitch.
+- Ensure every 'say' ends with a question, except for the final goodbye.`,
   model: "gpt-4o-mini",
   modelSettings: { temperature: 0.1, topP: 1, maxTokens: 512, store: true, response_format: RESPONSE_SCHEMA },
-  tools: []
+  tools: [validateEmailTool, normalizeSpokenEmailTool, validatePriceRangeTool, normalizeListingDateTool, searchKnowledgeBaseTool]
 });
 
-// ─── Routing Map ──────────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Routing Map ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const NODE_AGENTS = {
   // NODE_0_WELCOME: Bypassed directly in getWelcome() to avoid framework overhead
@@ -252,7 +271,7 @@ export const TERMINAL_NODES = new Set([
   'TERM_NO_REGISTRATION'
 ]);
 
-// ─── Default Session State ────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Default Session State ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const createDefaultSession = () => ({
   caller_phone: '',
@@ -296,20 +315,15 @@ const createDefaultSession = () => ({
   node4_done: false,
 });
 
-// ─── Helper: Sanitize message content for OpenAI API ──────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: Sanitize message content for OpenAI API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function sanitizeMessage(msg) {
+  // Pass-through for valid OpenAI/Library objects.
   if (!msg || typeof msg !== 'object') return msg;
-  try {
-    // Force POJO conversion to strip library-internal symbols/fields
-    // This ensures compatibility with the plain OpenAI API expectations.
-    return JSON.parse(JSON.stringify(msg));
-  } catch (e) {
-    return msg;
-  }
+  return msg;
 }
 
-// ─── Helper: Parse agent output ───────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Helper: Parse agent output ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 function parseAgentOutput(rawOutput) {
   if (!rawOutput) return { say: '', updates: {}, next_node: 'CONTINUE', notes: '' };
@@ -366,7 +380,7 @@ function parseAgentOutput(rawOutput) {
   }
 }
 
-// ─── Session Factory ──────────────────────────────────────────────────────────
+// ΓöÇΓöÇΓöÇ Session Factory ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export function createCallSession(callerPhone = '', options = {}) {
   const conversationHistory = [];
@@ -374,138 +388,94 @@ export function createCallSession(callerPhone = '', options = {}) {
   let currentNode = 'NODE_0_WELCOME';
   let currentProcessingId = 0;
 
-  // ── Internal runner ─────────────────────────────────────────────────────
-
-  async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
-    const myProcessingId = currentProcessingId; // Capture current ID to detect aborts
-
-    try {
-      return await withTrace("Reseller Qualification", async () => {
-        // Isolate Runner per turn to prevent cross-talk and race conditions
-        const turnRunner = new Runner({
-          traceMetadata: {
-            __trace_source__: "voice-ai-platform",
-            workflow_id: "wf_meesho_reseller_v3"
-          }
-        });
-
-        // System message is now handled externally/consistently
-        const systemMessage = sanitizeMessage({
-          role: 'system',
-          content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
-        });
-
-        // --- Smart History Slicing (Revised v29) ---
-        // We ensure that we never start history with a 'tool' role.
-        // We also strip library-internal fields to keep it clean for OpenAI.
-        let messages = [...conversationHistory];
-        if (messages.length > 10) {
-          let sliceIdx = messages.length - 10;
-          // Search backwards for a safe starting point (must be 'user' or 'assistant' without pending tool calls)
-          while (sliceIdx < messages.length && (messages[sliceIdx].role === 'tool' || (messages[sliceIdx].role === 'assistant' && messages[sliceIdx].tool_calls))) {
-            sliceIdx++;
-          }
-          messages = messages.slice(sliceIdx);
-        }
-
-        const sanitizedMessages = messages.map(msg => {
-          // Items without a 'role' are Responses API native items (function_call,
-          // function_call_output) — pass through as-is after sanitize.
-          if (!msg.role) return sanitizeMessage(msg);
-
-          switch (msg.role) {
-            case 'system':
-            case 'user':
-              return sanitizeMessage({ role: msg.role, content: msg.content || '' });
-            case 'assistant': {
-              const out = { role: 'assistant', content: msg.content || '' };
-              if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-                out.tool_calls = msg.tool_calls;
-              }
-              return sanitizeMessage(out);
-            }
-            case 'tool':
-              return sanitizeMessage({
-                role: 'tool',
-                content: msg.content || '',
-                tool_call_id: msg.tool_call_id,
-                name: msg.name
-              });
-            default:
-              return sanitizeMessage(msg);
-          }
-        });
-
-        const stream = await turnRunner.run(agent, [systemMessage, ...sanitizedMessages], { stream: true });
-
-        let finalOutputText = "";
-        let sentLength = 0;
-
-        for await (const event of stream) {
-          // TURN ABORT CHECK: If a newer transcript started processing, kill this stream immediately
-          if (myProcessingId !== currentProcessingId) {
-            if (options.logger) options.logger.warn(`[Workflow] Aborting stale turn runner loop (ID: ${myProcessingId})`);
-            break;
-          }
-
-          // Handle raw string events (non-tool calls)
-          if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
-            finalOutputText += event.data.text;
-          }
-          // Handle @openai/agents v0.0.5 structured json streaming object deltas
-          else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
-            const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
-            if (contentObj && contentObj.text) {
-              finalOutputText = contentObj.text; // the framework accumulates the full string here
-            }
-          }
-          else if (event.type === 'model_text_delta') {
-            finalOutputText += event.data.textDelta || event.data.delta || '';
-          }
-
-          // Try to parse 'say' from whatever we've accumulated so far
-          if (onSayChunk && finalOutputText) {
-            // Look for "say": "..." pattern. Handle opening quote through current end.
-            const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
-            if (sayMatch) {
-              const currentSay = sayMatch[1];
-              // Unescape common JSON characters
-              const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
-
-              if (unescaped.length > sentLength) {
-                const chunk = unescaped.substring(sentLength);
-                sentLength = unescaped.length;
-                onSayChunk(chunk);
-              }
-            }
-          }
-        }
-
-        await stream.completed;
-        if (!nodeOptions.skipHistory) {
-          // Sanitize new items before storing.
-          // Filter out items without a 'role' field — these are Responses API internal
-          // items (function_call, function_call_output) that cannot be safely replayed
-          // as chat messages on subsequent turns.
-          const newItems = stream.newItems
-            .map(item => sanitizeMessage(item.rawItem))
-            .filter(item => item && item.role);
-          conversationHistory.push(...newItems);
-        }
-        return stream.finalOutput;
-      });
-    } catch (err) {
-      if (options.logger) options.logger.error('[Workflow] runNode critical failure', err);
-      // Fallback graceful response
-      return {
-        say: "I'm sorry, I'm having a bit of trouble with my system. Can you please tell me that again?",
-        next_node: 'CONTINUE',
-        updates: {}
-      };
+  const runner = new Runner({
+    traceMetadata: {
+      __trace_source__: "voice-ai-platform",
+      workflow_id: "wf_meesho_reseller_v3"
     }
+  });
+
+  // Debug: Log tool availability
+  if (options.logger) {
+    options.logger.info('[Workflow] Tools loaded:', {
+      validateEmailTool: !!validateEmailTool,
+      validateEmailTool_props: validateEmailTool ? Object.keys(validateEmailTool) : [],
+      normalizeSpokenEmailTool: !!normalizeSpokenEmailTool,
+      validatePriceRangeTool: !!validatePriceRangeTool,
+      normalizeListingDateTool: !!normalizeListingDateTool,
+      searchKnowledgeBaseTool: !!searchKnowledgeBaseTool
+    });
   }
 
-  // ── Mark node as done when leaving it ──────────────────────────────────
+  // ΓöÇΓöÇ Internal runner ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+  async function runNode(agent, userMessage, onSayChunk, nodeOptions = {}) {
+    return await withTrace("Reseller Qualification", async () => {
+      // System message is now handled externally/consistently
+      const systemMessage = sanitizeMessage({
+        role: 'system',
+        content: `${BASE_VOICE_CONTEXT}\n${GLOBAL_GUARDRAILS}\n${DATA_INTERPRETATION_CONTEXT}`
+      });
+
+      // We do NOT push userMessage here anymore. It's pushed in processTranscript.
+
+      // Limit conversation history to last 10 turns and sanitize
+      const trimmedHistory = conversationHistory.slice(-10).map(sanitizeMessage);
+
+      const stream = await runner.run(agent, [systemMessage, ...trimmedHistory], { stream: true });
+
+      let finalOutputText = "";
+      let sentLength = 0;
+
+      for await (const event of stream) {
+        if (!event.type.includes('raw_model')) {
+          console.log(`[Stream Event]`, event.type);
+        }
+
+        // Handle raw string events (non-tool calls)
+        if (event.type === 'raw_model_stream_event' && event.data?.type === 'text_stream') {
+          finalOutputText += event.data.text;
+        }
+        // Handle @openai/agents v0.0.5 structured json streaming object deltas
+        else if (event.type === 'run_item_stream_event' && event.event === 'item.update') {
+          const contentObj = event.item?.content?.find(c => c.type === 'text' || c.type === 'json');
+          if (contentObj && contentObj.text) {
+            finalOutputText = contentObj.text; // the framework accumulates the full string here
+          }
+        }
+        else if (event.type === 'model_text_delta') {
+          finalOutputText += event.data.textDelta || event.data.delta || '';
+        }
+
+        // Try to parse 'say' from whatever we've accumulated so far
+        if (onSayChunk && finalOutputText) {
+          // Look for "say": "..." pattern. Handle opening quote through current end.
+          const sayMatch = finalOutputText.match(/"say"\s*:\s*"([^"]*)/);
+          if (sayMatch) {
+            const currentSay = sayMatch[1];
+            // Unescape common JSON characters
+            const unescaped = currentSay.replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n');
+
+            if (unescaped.length > sentLength) {
+              const chunk = unescaped.substring(sentLength);
+              sentLength = unescaped.length;
+              onSayChunk(chunk);
+            }
+          }
+        }
+      }
+
+      await stream.completed;
+      if (!nodeOptions.skipHistory) {
+        // Sanitize new items before storing
+        const newItems = stream.newItems.map(item => sanitizeMessage(item.rawItem));
+        conversationHistory.push(...newItems);
+      }
+      return stream.finalOutput;
+    });
+  }
+
+  // ΓöÇΓöÇ Mark node as done when leaving it ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   function markNodeDone(nodeName) {
     const match = nodeName.match(/NODE_(\d)/);
@@ -514,7 +484,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     }
   }
 
-  // ── Public API ──────────────────────────────────────────────────────────
+  // ΓöÇΓöÇ Public API ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
   // Callback to check if stream is still active
   let isActiveCallback = () => true;
@@ -533,21 +503,20 @@ export function createCallSession(callerPhone = '', options = {}) {
   const FAST_MATCH_CONFIG = {
     'NODE_1_NAME_INTEREST': [
       {
-        pattern: /^(mera naam|my name is|main|i am|this is|मेरा नाम|मैं) (.*?)(?: hai| hoon|है|हूं)?$/i,
+        pattern: /^(mera naam|my name is|main|i am|this is|αñ«αÑçαñ░αñ╛ αñ¿αñ╛αñ«|αñ«αÑêαñé) (.*?)(?: hai| hoon|αñ╣αÑê|αñ╣αÑéαñé)?$/i,
         handle: (match, session) => {
-          if (!session) return null;
           const name = match[2].trim();
           if (!session.interest_in_meesho) {
             if (session.pitch_delivered) {
               return {
                 updates: { name_spoken: name },
-                say: `Achha, ${name} ji. Toh kya aap Meesho join karna chahte hain?`,
+                say: `Achha, ${name} ji. Toh kya aap Meesho par apne products bechna chahte hain?`,
                 next_node: 'CONTINUE'
               };
             }
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?`,
+              say: `Achha, ${name} ji. Meesho par fourteen crore se zyada customers hain, aur yahan zero commission aur zero logistics charges ka fayda milta hai. Kya aap Meesho par apne products bechna chahte hain?`,
               next_node: 'CONTINUE'
             };
           }
@@ -559,9 +528,8 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ|αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ|αñ£αÑÇ αñ¼αññαñ╛αñçαñÅ|αñ¼αññαñ╛αñçαñÅ|αñ╣αñ╛αñé αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ)$/i,
         handle: (match, session) => {
-          if (!session) return null;
           if (!session.interest_in_meesho) {
             // Let the LLM handle "haanji" etc. at node start to ensure pitch is delivered
             return null;
@@ -576,7 +544,7 @@ export function createCallSession(callerPhone = '', options = {}) {
         }
       },
       {
-        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested|नहीं|न|नो|बिल्कुल नहीं)$/i,
+        pattern: /^(nahi|na|no|nhi|reject|bilkul nahi|not interested|αñ¿αñ╣αÑÇαñé|αñ¿|αñ¿αÑï|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓ αñ¿αñ╣αÑÇαñé)$/i,
         updates: { interest_in_meesho: 'no' },
         say: "Achha, koi baat nahi. Agar aapka mann badle toh humein zaroor batayiye. Dhanyavad!",
         next_node: 'TERM_NOT_INTERESTED'
@@ -584,7 +552,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     ],
     'NODE_2_DETAILS': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ)$/i,
         handle: (match, session) => {
           return null; // Let LLM extract proper intent if needed
         }
@@ -592,9 +560,8 @@ export function createCallSession(callerPhone = '', options = {}) {
     ],
     'NODE_3_CONTACT_GST': [
       {
-        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
+        pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|αñ╣αñ╛αñé|αñ╣αñ╛|αñ£αÑÇ|αñáαÑÇαñò αñ╣αÑê|αñ¼αñ┐αñ▓αÑìαñòαÑüαñ▓|αñ£αñ╝αñ░αÑéαñ░|αñ╣αñ╛αñéαñ£αÑÇ|αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ|αñ£αÑÇ αñ¼αññαñ╛αñçαñÅ|αñ¼αññαñ╛αñçαñÅ|αñ╣αñ╛αñé αñ£αÑÇ αñ¼αÑïαñ▓αñ┐αñÅ)$/i,
         handle: (match, session) => {
-          if (!session) return null;
           if (!session.email_valid && session.email_attempts === 0) {
             return {
               updates: {},
@@ -616,7 +583,7 @@ export function createCallSession(callerPhone = '', options = {}) {
 
   function checkFastMatch(text) {
     if (!text) return false;
-    const cleanText = text.trim().toLowerCase().replace(/[.,?!|।]/g, '');
+    const cleanText = text.trim().toLowerCase().replace(/[.,?!|αÑñ]/g, '');
     if (FAST_MATCH_CONFIG[currentNode]) {
       for (const entry of FAST_MATCH_CONFIG[currentNode]) {
         if (cleanText.match(entry.pattern)) {
@@ -627,52 +594,74 @@ export function createCallSession(callerPhone = '', options = {}) {
     return false;
   }
 
-  async function processTranscript(transcript, tts = null, silenceFiller = null, options = {}, isRecursive = false) {
-    if (!transcript) return { say: "", next_node: currentNode, session: { ...session } };
-
-    const currentProcId = isRecursive ? currentProcessingId : ++currentProcessingId;
-    const cleanTranscript = transcript.trim();
-    // Early exit if the call is no longer active (WS closed or Twilio stopped)
-    if (!isActiveCallback()) {
-      if (options.logger) options.logger.warn('[Workflow] processTranscript called after call ended — aborting');
-      return { say: '', next_node: currentNode, session: { ...session }, streamedByNode: false };
-    }
-
-    // const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|।]/g, ''); // This line is removed
+  async function processTranscript(transcript, tts = null, silenceFiller = null) {
+    currentProcessingId++;
+    const currentProcId = currentProcessingId;
+    const cleanTranscript = transcript.trim().toLowerCase().replace(/[.,?!|αÑñ]/g, '');
     let fastMatchResult = null;
 
     // --- Helpers ---
     const runTool = async (toolObj, params) => {
       if (!toolObj) {
         if (options.logger) options.logger.error('[Workflow] Tool object is undefined');
-        return JSON.stringify({ success: false, error: 'Tool object is undefined', timestamp: Date.now() });
+        throw new Error('Tool object is undefined');
       }
 
+      let result;
+      // Robust tool execution. 
+      // PRIORITY: Use .execute() for direct raw execution (returns JS objects)
+      // SECONDARY: Use .invoke() which is the library's wrapper (returns stringified JSON)
       try {
-        const rawResult = toolObj.execute ?
-          await toolObj.execute(params) :
-          await toolObj.invoke(params);
-
-        // FORCE JSON - no exceptions
-        const safeResult = {
-          success: true,
-          data: rawResult,
-          timestamp: Date.now()
-        };
-
-        if (options.logger) {
-          options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} executed successfully`);
+        // PRIORITY: Use .execute() for direct raw execution (returns JS objects).
+        // This avoids library-level JSON wrapping/unwrapping that can cause "Invalid JSON" errors.
+        if (toolObj.execute && typeof toolObj.execute === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .execute()`);
+          result = await toolObj.execute(params);
+        } else if (toolObj.invoke && typeof toolObj.invoke === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via .invoke()`);
+          result = await toolObj.invoke(params);
+        } else if (typeof toolObj === 'function') {
+          if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name || 'anonymous'} as function`);
+          result = await toolObj(params);
+        } else {
+          const runFn = toolObj.run || toolObj.call;
+          if (typeof runFn === 'function') {
+            if (options.logger) options.logger.withComponent('Workflow').debug(`Executing tool: ${toolObj.name} via fallback run/call`);
+            result = await runFn.call(toolObj, params);
+          } else {
+            if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} has no executable method`);
+            throw new Error(`Tool object ${toolObj.name || 'unknown'} is not executable`);
+          }
         }
-
-        return JSON.stringify(safeResult);
       } catch (err) {
-        if (options.logger) options.logger.error(`[Workflow] Tool ${toolObj.name || 'unknown'} error:`, err);
-        return JSON.stringify({
-          success: false,
-          error: err.message,
-          timestamp: Date.now()
-        });
+        if (options.logger) options.logger.error(`[Workflow] Tool execution failed: ${toolObj.name || 'unknown'}. Params: ${JSON.stringify(params)}`, err);
+        throw err;
       }
+
+      if (options.logger) {
+        const type = typeof result;
+        const preview = type === 'string' ? result.substring(0, 150) : (type === 'object' ? JSON.stringify(result).substring(0, 150) : result);
+        options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name || 'unknown'} RAW result (${type}): ${preview}`);
+      }
+
+      // Robust parsing: handle both objects and JSON strings
+      // We must check if it's a string, and if so, try to parse it. 
+      // Library often returns stringified JSON even if the tool returned an object.
+      if (typeof result === 'string') {
+        const trimmed = result.trim();
+        // If it starts with { or [, it's likely JSON
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (options.logger) options.logger.withComponent('Workflow').debug(`Tool ${toolObj.name} JSON string unwrapped successfully`);
+            return parsed;
+          } catch (e) {
+            if (options.logger) options.logger.warn(`[Workflow] Tool ${toolObj.name} returned JSON-like string but failed parse: ${trimmed.substring(0, 50)}...`);
+            return result;
+          }
+        }
+      }
+      return result;
     };
 
     const handleBackgroundTasks = (output) => {
@@ -690,29 +679,21 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             if (silenceFiller) silenceFiller.pause();
-            const normRes = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
-            const normData = JSON.parse(normRes);
-            const norm = normData.success ? normData.data : null;
-
-            if (norm && norm.normalized_email) {
-              const valRes = await runTool(validateEmailTool, { email: norm.normalized_email });
-              const valData = JSON.parse(valRes);
-
-              if (valData.success && valData.data.valid) {
-                session.email = valData.data.normalized;
-                session.email_valid = true;
-                if (options.logger) {
-                  options.logger.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
-                  options.logger.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: true } });
-                }
-              } else if (currentProcId === currentProcessingId) {
-                session.email_valid = false;
-                session.email_attempts = (session.email_attempts || 0) + 1;
-                if (isActiveCallback()) {
-                  const errorMsg = valData.data?.error || "Invalid format";
-                  if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid', { error: errorMsg });
-                  await processTranscript(`[SYSTEM: Email "${norm.normalized_email}" is invalid (${errorMsg}). Politely ask the user to repeat the email address.]`, tts, silenceFiller);
-                }
+            const norm = await runTool(normalizeSpokenEmailTool, { spoken_email: candidate });
+            // Simple validation: check for @ and .
+            if (norm && typeof norm === 'object' && norm.normalized_email && norm.normalized_email.includes('@') && norm.normalized_email.includes('.')) {
+              session.email = norm.normalized_email;
+              session.email_valid = true;
+              if (options.logger) {
+                options.logger.withComponent('Validation').info('[Background] Email Simplified Validation Passed');
+                options.logger.withComponent('Database').info('Saving session updates', { updates: { email: norm.normalized_email, email_valid: true } });
+              }
+            } else if (currentProcId === currentProcessingId) {
+              session.email_valid = false;
+              session.email_attempts = (session.email_attempts || 0) + 1;
+              if (isActiveCallback()) {
+                if (options.logger) options.logger.withComponent('Validation').warn('[Background] Email Invalid (Simplified)');
+                await processTranscript(`[SYSTEM: Email "${candidate}" is invalid. Politely ask the user to repeat the email address.]`, tts, silenceFiller);
               }
             }
           } catch (e) {
@@ -746,7 +727,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             session.gstin = normalized;
             session.gstin_valid = true;
             if (isActiveCallback()) {
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Captured');
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] GST Captured (Trust Mode)');
               if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
             }
           } catch (e) {
@@ -773,16 +754,11 @@ export function createCallSession(callerPhone = '', options = {}) {
         Promise.resolve().then(async () => {
           try {
             const todayISO = new Date().toISOString().split('T')[0];
-            const rawResponse = await runTool(normalizeListingDateTool, {
-              spoken_date: candidate,
-              current_date_iso: new Date().toISOString().split('T')[0]
-            });
-            const response = JSON.parse(rawResponse);
-            const norm = response.success ? response.data : null;
-            if (norm && norm.valid && norm.normalized) {
-              session.listing_start = norm.normalized;
-              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
-              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
+            const res = await runTool(normalizeListingDateTool, { spoken_date: candidate, current_date_iso: todayISO });
+            if (res?.valid) {
+              session.listing_start = res.normalized;
+              if (options.logger) options.logger.withComponent('Validation').info('[Background] Date Normalized', { date: res.normalized });
+              if (options.logger) options.logger.withComponent('Database').info('Saving session updates', { updates: { listing_start: res.normalized } });
             }
           } catch (e) {
             console.error(e);
@@ -816,7 +792,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (isNaN(pMin) || isNaN(pMax)) {
               if (options.logger) options.logger.withComponent('Validation').warn('[Background] Price is text, asking LLM to confirm', { min: originalMin, max: originalMax });
               if (isActiveCallback() && currentProcId === currentProcessingId) {
-                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, ₹100 se ₹200 tak?"]`, tts, silenceFiller);
+                await processTranscript(`[SYSTEM: The price you captured ("${originalMin}" - "${originalMax}") is text. Ask the user to confirm the numerical price range, e.g. "Matlab, Γé╣100 se Γé╣200 tak?"]`, tts, silenceFiller);
               }
               return;
             }
@@ -894,9 +870,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     const agent = NODE_AGENTS[currentNode];
     if (!agent) {
       if (TERMINAL_NODES.has(currentNode)) {
-        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session } };
+        return { say: "", next_node: currentNode, session: { ...session } };
       }
-      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session } };
+      return { say: "Samay dene ke liye dhanyavad. Alvida!", next_node: 'TERM_COMPLETE', session: { ...session } };
     }
 
     let userMessage = transcript;
@@ -919,37 +895,16 @@ export function createCallSession(callerPhone = '', options = {}) {
     const llmPromise = (async () => {
       try {
         let ttsBuffer = "";
-        let firstChunkLogged = false;
-        let ttsFirstSentLogged = false;
-        const llmStartTime = performance.now();
         const raw = await Logger.runWithContext(options.logger?.context || {}, async () => {
           return await runNode(agent, userMessage, (chunk) => {
-            if (!firstChunkLogged) {
-              firstChunkLogged = true;
-              if (options.logger) {
-                options.logger.withComponent('Timing').info('LLM first say chunk', {
-                  ttft_ms: Math.round(performance.now() - llmStartTime),
-                  chunk_preview: chunk.substring(0, 40)
-                });
-              }
-            }
             if (!fastMatchResult && tts && isActiveCallback()) {
               streamedCount += chunk.length;
               ttsBuffer += chunk;
-              if (/[.,?!|।, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
-                const bIdx = ttsBuffer.search(/[.,?!|।,]/) + 1 || ttsBuffer.length;
+              if (/[.,?!|αÑñ, ]/.test(ttsBuffer) || ttsBuffer.split(/\s+/).length >= 6) {
+                const bIdx = ttsBuffer.search(/[.,?!|αÑñ,]/) + 1 || ttsBuffer.length;
                 if (bIdx > 0 || ttsBuffer.split(/\s+/).length >= 6) {
                   const toSendArr = ttsBuffer.substring(0, bIdx || ttsBuffer.length);
                   tts.sendText(toSendArr);
-                  if (!ttsFirstSentLogged) {
-                    ttsFirstSentLogged = true;
-                    if (options.logger) {
-                      options.logger.withComponent('Timing').info('TTS first text sent', {
-                        time_since_llm_start_ms: Math.round(performance.now() - llmStartTime),
-                        text_preview: toSendArr.substring(0, 40)
-                      });
-                    }
-                  }
                   ttsBuffer = ttsBuffer.substring(bIdx || ttsBuffer.length);
                 }
               }
@@ -991,7 +946,7 @@ export function createCallSession(callerPhone = '', options = {}) {
           const name2 = actual.updates.name_spoken.toLowerCase().trim();
 
           // Simple heuristic: If one is a substring of another or they are equal, it's not a mismatch
-          // This avoids conflict when LLM refines "अमृता" to "Amrita" or adding a last name.
+          // This avoids conflict when LLM refines "αñàαñ«αÑâαññαñ╛" to "Amrita" or adding a last name.
           // Since they are from the same recording, we trust the LLM more but don't want to apologize if they are "close"
           if (name1 !== name2) {
             // If both are different scripts (one has non-ascii, other is ascii), we might assume they are the same if the turn was the same
@@ -1015,7 +970,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             currentNode = actual.next_node === 'CONTINUE' ? currentNode : actual.next_node;
           }
-        } else if (isActiveCallback()) {
+        } else {
           Object.assign(session, actual.updates);
           if (options.logger && Object.keys(actual.updates || {}).length > 0) {
             options.logger.withComponent('Database').info('Saving session updates', { updates: actual.updates });
@@ -1066,8 +1021,8 @@ export function createCallSession(callerPhone = '', options = {}) {
 
       try {
         const kbResult = await runTool(searchKnowledgeBaseTool, { query });
-        // Perform recursive turn synchronously, marking as recursive to maintain ID
-        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null, {}, true);
+        // Perform recursive turn synchronously
+        const recursiveResult = await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbResult}]`, null, null);
         // Important: merge recursive results back to session if they aren't already
         Object.assign(session, recursiveResult.session);
         return recursiveResult;
@@ -1077,15 +1032,13 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
     }
 
-    if (finalLLMOutput.updates && isActiveCallback()) {
+    if (finalLLMOutput.updates) {
       Object.assign(session, finalLLMOutput.updates);
       if (options.logger && Object.keys(finalLLMOutput.updates).length > 0) {
         options.logger.withComponent('Database').info('Saving session updates', { updates: finalLLMOutput.updates });
       }
     }
-    if (isActiveCallback()) {
-      handleBackgroundTasks(finalLLMOutput);
-    }
+    handleBackgroundTasks(finalLLMOutput);
 
     const prevNode = currentNode;
     const nextNode = finalLLMOutput.next_node === 'CONTINUE' ? currentNode : finalLLMOutput.next_node;
