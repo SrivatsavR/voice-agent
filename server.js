@@ -98,15 +98,16 @@ class SilenceFillerManager {
   _fire() {
     if (!this._active || this._paused || !this._tts) return;
 
-    if (this._tts.isSpeaking) {
+    if (this._tts.isSpeaking || (this._tts.hasPendingAudio && this._tts.hasPendingAudio())) {
+      this._log.debug('Aborting filler: Agent is speaking or about to speak');
       this.reset();
       return;
     }
 
-    // Final safety check: is TTS still connected and ready?
+    // Safety check: is TTS still connected and ready?
     if (this._tts.isReady && this._tts.ws?.readyState === WebSocket.OPEN) {
-      const name = this._callSession?.getSession()?.preferred_name || '';
-      const phrase = name ? `Hello ${name}, kya aap mujhe sun pa rahe hain?` : `Hello, kya aap mujhe sun pa rahe hain?`;
+      const name = this._callSession?.getSession()?.name_spoken || '';
+      const phrase = name ? `${name} ji, kya aapko meri awaaz aa rahi hai?` : `Hello, kya aap mujhe sun pa rahe hain?`;
 
       this._log.info(`Firing silence filler phrase at ${SILENCE_FILLER_TIMEOUT_MS / 1000}s`, { phrase });
       this._tts.sendText(phrase);

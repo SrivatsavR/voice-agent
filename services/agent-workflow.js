@@ -132,7 +132,7 @@ Qualify the seller. **PRIORITY**: If the user already provided their name, items
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'interest_in_meesho' is missing: Give the pitch ("There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?") then ask that question.
+  1. If 'interest_in_meesho' is missing: Give the pitch ("Meesho par crores customers hain aur hum zero commission fee charge karte hain. Kya aap Meesho join karna chahte hain?") then ask that question.
   2. If interested but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If interested and Name is known, but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
 
@@ -188,7 +188,7 @@ Collect email and GST. **CHECK SYSTEM CONTEXT**: If the email or GST was already
 === QUESTION FLOW ===
 1. **Email**: If 'email' is missing AND 'raw_email' is missing, ask: "Kya aap apna email address bata sakte hai?"
 2. **GST**: If 'gstin' is missing AND 'raw_gstin' is missing AND 'gst_declined' is not true, ask: "Kya aapke paas 15-digit GST number hai?"
-3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
+3. **UIN (Fallback)**: If 'gst_declined' is true AND 'uin' is missing AND 'gstin' is missing AND 'raw_gstin' is missing, ask: "Meesho par bina GST ke list karne ke liye Enrollment ID ya UIN lagta hai. Kya aapke paas wo hai?"
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -418,7 +418,12 @@ export function createCallSession(callerPhone = '', options = {}) {
             case 'user':
               return sanitizeMessage({ role: msg.role, content: msg.content || '' });
             case 'assistant': {
-              const out = { role: 'assistant', content: msg.content || '' };
+              let content = msg.content || '';
+              // OpenAI PROVIDER BUGFIX: If content is string, wrap in array of output_text
+              if (typeof content === 'string') {
+                content = [{ type: 'output_text', text: content }];
+              }
+              const out = { role: 'assistant', content };
               if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
                 out.tool_calls = msg.tool_calls;
               }
@@ -547,7 +552,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             }
             return {
               updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. There are crores of customers in Meesho and we charge zero commission fee. Do you want to join Meesho?`,
+              say: `Achha, ${name} ji. Meesho par crores customers hain aur hum zero commission fee charge karte hain. Kya aap Meesho join karna chahte hain?`,
               next_node: 'CONTINUE'
             };
           }
@@ -894,9 +899,9 @@ export function createCallSession(callerPhone = '', options = {}) {
     const agent = NODE_AGENTS[currentNode];
     if (!agent) {
       if (TERMINAL_NODES.has(currentNode)) {
-        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session } };
+        return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: currentNode, session: { ...session, call_outcome: 'completed' } };
       }
-      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session } };
+      return { say: "Samay dene ke liye dhanyavad. Have a nice day!", next_node: 'TERM_COMPLETE', session: { ...session, call_outcome: 'completed' } };
     }
 
     let userMessage = transcript;
@@ -1032,12 +1037,15 @@ export function createCallSession(callerPhone = '', options = {}) {
       // Pushing to history for continuity
       conversationHistory.push(sanitizeMessage({
         role: 'assistant',
-        content: JSON.stringify({
-          say: fastMatchResult.say,
-          updates_json: JSON.stringify(updates),
-          next_node: nextNode,
-          notes: 'Fast-match'
-        })
+        content: [{
+          type: 'output_text',
+          text: JSON.stringify({
+            say: fastMatchResult.say,
+            updates_json: JSON.stringify(updates),
+            next_node: nextNode,
+            notes: 'Fast-match'
+          })
+        }]
       }));
 
       if (options.logger && Object.keys(updates).length > 0) {

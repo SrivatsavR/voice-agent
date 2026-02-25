@@ -93,11 +93,14 @@ function handleLogEntry(entry) {
         }
     }
 
-    // 3. Extraction & Validation Feed
-    else if (component === 'Validation' || component === 'KnowledgeBase' || component === 'VectorSearch' || component === 'Workflow' ||
-        msg.includes('[Fast-Match]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]')) {
+    // 3. Extractable intelligence (Variable extraction events)
+    if (component === 'Validation' || component === 'Database' || component === 'Workflow' ||
+        msg.includes('[Background]') || msg.includes('Saving session updates') || msg.includes('Validated') ||
+        msg.includes('[FastMatch]') || msg.includes('[Burst Correction]') || msg.includes('[KnowledgeBase]') || msg.includes('[VectorSearch]') ||
+        msg.toLowerCase().includes('captured') || msg.toLowerCase().includes('validated')) {
+
         let type = 'info';
-        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.includes('match') || msg.includes('Retrieved')) type = 'success';
+        if (msg.includes('Valid') || msg.includes('Success') || msg.includes('Found') || msg.toLowerCase().includes('match') || msg.includes('Retrieved') || msg.includes('Validated')) type = 'success';
         if (msg.includes('Invalid') || msg.includes('Error') || msg.includes('failed') || msg.includes('Discarding')) type = 'warn';
         if (msg.includes('Searching') || msg.includes('Querying') || msg.includes('Generating embedding')) type = 'info';
 
@@ -122,14 +125,39 @@ function logIntelligence(text, type = 'info') {
     const pill = document.createElement('div');
     pill.className = `extraction-pill ${type === 'success' ? 'success' : (type === 'warn' ? 'warn' : '')}`;
 
-    let icon = 'info';
+    const iconMap = {
+        'Background': 'zap',
+        'Validation': 'check-circle',
+        'Database': 'database',
+        'Saving': 'database',
+        'Workflow': 'git-branch',
+        'Fast-Match': 'zap',
+        'Burst': 'zap',
+        'KnowledgeBase': 'search',
+        'VectorSearch': 'search',
+        'Validated': 'check-circle',
+        'Invalid': 'alert-circle'
+    };
+
+    let icon = 'info'; // Default icon
     const lowText = text.toLowerCase();
+
+    // Check for specific keywords first
     if (lowText.includes('burst')) icon = 'zap';
     else if (lowText.includes('fast-match')) icon = 'zap';
     else if (lowText.includes('valid')) icon = 'shield-check';
     else if (lowText.includes('found')) icon = 'check-circle';
     else if (lowText.includes('captured')) icon = 'database';
     else if (lowText.includes('search') || lowText.includes('query') || lowText.includes('embedding') || lowText.includes('retrieved')) icon = 'search';
+    else {
+        // Then check against the iconMap for broader component/message types
+        for (const [key, val] of Object.entries(iconMap)) {
+            if (text.includes(key)) { // Use original text for map keys
+                icon = val;
+                break;
+            }
+        }
+    }
 
     pill.innerHTML = `<i data-lucide="${icon}" class="w-2.5 h-2.5"></i> <span>${text}</span>`;
     extractionFeed.prepend(pill);
@@ -297,14 +325,14 @@ function addMessage(role, text) {
 
 function updateVariables(session) {
     const targets = [
-        { key: 'name_spoken', label: 'Name', icon: 'user' },
-        { key: 'interest_in_meesho', label: 'Interest', icon: 'check-circle' },
-        { key: 'has_bank_account', label: 'Bank Account?', icon: 'credit-card' },
-        { key: 'products_sold', label: 'Category', icon: 'package' },
-        { key: 'price_min', label: 'Price Range', icon: 'indian-rupee', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : null) },
-        { key: 'listing_start', label: 'Ready By', icon: 'calendar' },
-        { key: 'email', label: 'Email', icon: 'mail' },
-        { key: 'gstin', label: 'GST', icon: 'shield-check' }
+        { key: 'name_spoken', label: 'Candidate Name', icon: 'user' },
+        { key: 'interest_in_meesho', label: 'Joining Interest', icon: 'thumbs-up' },
+        { key: 'has_bank_account', label: 'Active Bank Acc?', icon: 'credit-card' },
+        { key: 'products_sold', label: 'Product Items', icon: 'package' },
+        { key: 'price_min', label: 'Price Range', icon: 'tag', format: (s) => (s.price_min && s.price_max) ? `₹${s.price_min}-${s.price_max}` : (s.price_min ? `₹${s.price_min}+` : null) },
+        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar' },
+        { key: 'email', label: 'Email Address', icon: 'mail' },
+        { key: 'gstin', label: 'GST Number', icon: 'shield-check' }
     ];
 
     sessionVariables.innerHTML = '';
@@ -329,7 +357,7 @@ function updateVariables(session) {
         let displayVal = isSyncing ? 'Syncing...' : '--';
         if (isCaptured) {
             const rawVal = Array.isArray(val) ? val[0] : val;
-            displayVal = rawVal.toString().length > 20 ? rawVal.toString().substring(0, 18) + '..' : rawVal;
+            displayVal = rawVal && rawVal.toString().length > 20 ? rawVal.toString().substring(0, 18) + '..' : (rawVal || '--');
         }
 
         div.innerHTML = `

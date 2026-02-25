@@ -45,6 +45,7 @@ export class ElevenLabsTTS {
         this._currentGenerationId = 0;
         this._audioQueue = []; // Queue for chunks to be dripped to Twilio
         this._isDripping = false;
+        this._lastTextSentAt = 0;
 
         // Logger
         this._log = (options.logger || new Logger('TTS')).withComponent('TTS');
@@ -305,6 +306,7 @@ export class ElevenLabsTTS {
         }
 
         if (this.isReady && text && this.ws?.readyState === WebSocket.OPEN) {
+            this._lastTextSentAt = Date.now();
             this._log.debug('Sending text to TTS', { text_length: text.length, preview: text.substring(0, 80) });
 
             try {
@@ -418,5 +420,13 @@ export class ElevenLabsTTS {
                 }
             }, 2000);
         }
+    }
+
+    /**
+     * @returns {boolean} True if text was sent very recently or audio queue is not empty
+     */
+    hasPendingAudio() {
+        const textSentRecently = (Date.now() - this._lastTextSentAt) < 2000;
+        return textSentRecently || this._audioQueue.length > 0;
     }
 }
