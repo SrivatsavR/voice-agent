@@ -54,10 +54,9 @@ ASR might be messy. Ignore filler words ("haan", "matlab", "toh"). Focus on inte
   - "Bank account hai?" instead of "Kya aapke paas active bank account hai?"
 
 === DATA TYPES FOR UPDATES_JSON ===
-- 'email_valid', 'gstin_valid', 'pitch_delivered', 'summary_confirmed': **BOOLEAN** (true/false), NOT strings.
+- ALL yes/no fields (email_valid, gstin_valid, pitch_delivered, interest_in_meesho, has_bank_account): Use "yes" or "no" (string), NOT true/false.
 - 'price_min', 'price_max': **NUMBER** or null.
 - 'products_sold': **ARRAY** of strings.
-- 'interest_in_meesho': "yes" or "no".
 
 === RESPONSE FORMAT ===
 Strictly return JSON.
@@ -139,10 +138,10 @@ Qualify the seller. **SKIP RULE**: Check [SYSTEM: Session] FIRST. If 'name_spoke
 === QUESTION FLOW ===
 - **Identify Missing Info**: Check 'pitch_delivered', 'interest_in_meesho', 'name_spoken', and 'has_bank_account'.
 - **Ask the next missing field**:
-  1. If 'pitch_delivered' is false or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?" Set 'pitch_delivered': true. Do NOT pitch again after this.
+  1. If 'pitch_delivered' is "no" or missing: Deliver the pitch AND ask about interest in ONE combined message: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?" Set 'pitch_delivered': "yes". Do NOT pitch again after this.
   2. If 'interest_in_meesho' is "yes" but Name is missing: Ask "Aapka poora naam kya hai?".
   3. If Name is known but Bank Account is missing: Acknowledge their name (e.g. "Achha [Name] ji,") then ask "Kya aapke paas bank account hai?".
-- **IMPORTANT**: The pitch (14 Cr+ customers, zero commission, free logistics) must be delivered ONLY ONCE. If 'pitch_delivered' is true, NEVER repeat the pitch.
+- **IMPORTANT**: The pitch (14 Cr+ customers, zero commission, free logistics) must be delivered ONLY ONCE. If 'pitch_delivered' is "yes", NEVER repeat the pitch.
 
 === INTENT DETECTION ===
 | Intent | Signal | Action |
@@ -231,16 +230,18 @@ const closureAgent = new Agent({
      - Respond only with: "Zaroor, main check karke batati hoon."
   - The system will provide Knowledge Base results in the next turn.
      - Once you receive KB results, explain them simply in Hindi and ASK: "Kya aapko kuch aur jaanna hai?"
+   - ** KB SEARCH GUARD **: If 'kb_search_active' is true in the session, do NOT use TERM_COMPLETE even if the user says "ok" or "theek hai". Wait for the results.
   - ** CRITICAL **: Stay in 'NODE_4_CLOSURE'(next_node: CONTINUE) while answering questions.
 
 2. ** Closing Phase(Termination) **:
-- ONLY proceed to this phase if the user explicitly says they have NO more questions(e.g., "nahi", "no", "bas itna hi", "theek hai", "okay thanks").
+- ONLY proceed to this phase if the user explicitly says they have NO more questions(e.g., "nahi", "no", "bas itna hi") AND 'kb_search_active' is NOT true.
+- If the user says "ok" or "theek hai" while you are searching (after you said "check karke batati hoon"), simply acknowledge ("Ji") and wait for the system result. Do NOT close.
    - Final Say MUST BE EXACTLY: "Zaroor. Documents verify hone ke baad aap Meesho par listing shuru kar sakenge. Aapka samay dene ke liye bahut dhanyavad! Have a nice day!"
   - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. Explain it naturally in Hindi.
-- NEVER set next_node: "TERM_COMPLETE" if the user has just asked a question.
+- If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. Explain it naturally in Hindi. Set 'kb_search_active': false in 'updates_json'.
+- NEVER set next_node: "TERM_COMPLETE" if 'kb_search_active' is true.
 - Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
 - Ensure the final closing phrase is warm and complete before exiting.`,
   model: "gpt-4o-mini",
@@ -276,7 +277,7 @@ const createDefaultSession = () => ({
   interest_in_meesho: '',
   has_bank_account: '',
   callback_time: '',
-  pitch_delivered: false,
+  pitch_delivered: 'no',
   // Node 2
   products_sold: [],
   price_min: null,
@@ -287,14 +288,14 @@ const createDefaultSession = () => ({
   raw_listing_start: '',
   // Node 3
   email: '',
-  email_valid: false,
+  email_valid: 'no',
   email_attempts: 0,
   raw_email: '',
   gstin: '',
-  gstin_valid: false,
+  gstin_valid: 'no',
   gst_attempts: 0,
   raw_gstin: '',
-  gst_declined: false,
+  gst_declined: 'no',
   uin: '',
   closure_bridge_delivered: false,
   // Node 4
@@ -313,9 +314,19 @@ const createDefaultSession = () => ({
 function sanitizeMessage(msg) {
   if (!msg || typeof msg !== 'object') return msg;
   try {
-    // Force POJO conversion to strip library-internal symbols/fields
+    // Force POJO conversion to strip library-internal symbols/fields.
     // This ensures compatibility with the plain OpenAI API expectations.
-    return JSON.parse(JSON.stringify(msg));
+    const sanitized = JSON.parse(JSON.stringify(msg));
+
+    // Ensure 'content' is in a format OpenAI likes if it's an assistant message
+    if (sanitized.role === 'assistant' && Array.isArray(sanitized.content)) {
+      sanitized.content = sanitized.content.map(part => {
+        if (part.type === 'output_text') return { ...part, type: 'text' };
+        if (part.type === 'text') return part;
+        return part;
+      });
+    }
+    return sanitized;
   } catch (e) {
     return msg;
   }
@@ -337,7 +348,7 @@ function parseAgentOutput(rawOutput) {
   }
 
   // Strip markdown code fences if they survived
-  text = text.replace(/```json\s * /gi, '').replace(/```\s*/g, '').trim();
+  text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
   try {
     const parsed = JSON.parse(text);
@@ -366,6 +377,16 @@ function parseAgentOutput(rawOutput) {
         updates: {},
         next_node: 'CONTINUE',
         notes: 'partial_parse_success'
+      };
+    }
+
+    // Final Fallback: If it's a plain string (not starting with {), treat the whole thing as 'say'
+    if (text.length > 5 && !text.trim().startsWith('{')) {
+      return {
+        say: text.trim(),
+        updates: {},
+        next_node: 'CONTINUE',
+        notes: 'plain_text_fallback'
       };
     }
 
@@ -435,9 +456,9 @@ export function createCallSession(callerPhone = '', options = {}) {
               return sanitizeMessage({ role: msg.role, content: msg.content || '' });
             case 'assistant': {
               let content = msg.content || '';
-              // OpenAI PROVIDER BUGFIX: If content is string, wrap in array of output_text
+              // OpenAI PROVIDER BUGFIX: If content is string, wrap in array of text
               if (typeof content === 'string') {
-                content = [{ type: 'output_text', text: content }];
+                content = [{ type: 'text', text: content }];
               }
               const out = { role: 'assistant', content };
               if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
@@ -560,14 +581,11 @@ export function createCallSession(callerPhone = '', options = {}) {
         handle: (match, session) => {
           if (!session) return null;
           const name = match[2].trim();
-          if (!session.pitch_delivered) {
-            // Name given before pitch — capture name, deliver combined pitch+interest question
-            return {
-              updates: { name_spoken: name, pitch_delivered: true },
-              say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
-              next_node: 'CONTINUE'
-            };
-          }
+          return {
+            updates: { name_spoken: name, pitch_delivered: 'yes' },
+            say: `Achha, ${name} ji. Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?`,
+            next_node: 'CONTINUE'
+          };
           if (!session.interest_in_meesho) {
             // Pitch delivered but interest not yet captured — ask interest
             return {
@@ -588,9 +606,9 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|interested|i am interested|main interested hoon|haan ji boliye|ji bataiye|bataiye|ji boliye|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
           if (!session) return null;
-          if (!session.pitch_delivered) {
+          if (session.pitch_delivered !== 'yes') {
             return {
-              updates: { pitch_delivered: true },
+              updates: { pitch_delivered: 'yes' },
               say: "Meesho par 14 crore se zyada customers hain aur yahan zero commission aur free logistics ka fayda milta hai. Kya aap Meesho par apne items bechna chahte hai?",
               next_node: 'CONTINUE'
             };
@@ -632,13 +650,13 @@ export function createCallSession(callerPhone = '', options = {}) {
         pattern: /^(haan|ha|ji|yes|affirmative|theek hai|bilkul|zaroor|sure|haanji|हां|हा|जी|ठीक है|बिल्कुल|ज़रूर|हांजी|जी बोलिए|जी बताइए|बताइए|हां जी बोलिए)$/i,
         handle: (match, session) => {
           if (!session) return null;
-          if (!session.email_valid && session.email_attempts === 0) {
+          if (session.email_valid !== 'yes' && session.email_attempts === 0) {
             return {
               updates: {},
               say: "Achi baat hai, kripya apna email address bataiye.",
               next_node: 'CONTINUE'
             };
-          } else if (!session.gstin && !session.gst_declined) {
+          } else if (!session.gstin && session.gst_declined !== 'yes') {
             return {
               updates: { has_gst_number: 'yes' },
               say: "Sunke khushi hui! Aapka 15-digit ka GST number kya hai?",
@@ -733,9 +751,9 @@ export function createCallSession(callerPhone = '', options = {}) {
       // Silent background scan for tasks (removed debug log per user request)
 
       // 1. Email
-      if (updates.raw_email && !session.bg_email_running) {
-        session.bg_email_running = true;
-        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: true } });
+      if (updates.raw_email && session.bg_email_running !== 'yes') {
+        session.bg_email_running = 'yes';
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_email_running: 'yes' } });
         const candidate = updates.raw_email;
         Promise.resolve().then(async () => {
           try {
@@ -750,13 +768,13 @@ export function createCallSession(callerPhone = '', options = {}) {
 
               if (valData.success && valData.data.valid) {
                 session.email = valData.data.normalized;
-                session.email_valid = true;
+                session.email_valid = 'yes';
                 if (log) {
                   log.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
-                  log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: true } });
+                  log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: 'yes' } });
                 }
               } else if (currentProcId === currentProcessingId) {
-                session.email_valid = false;
+                session.email_valid = 'no';
                 session.email_attempts = (session.email_attempts || 0) + 1;
                 if (isActiveCallback()) {
                   const errorMsg = valData.data?.error || "Invalid format";
@@ -772,8 +790,8 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Ask for email again politely.]`, tts, silenceFiller);
             }
           } finally {
-            session.bg_email_running = false;
-            const finalUpdates = { bg_email_running: false };
+            session.bg_email_running = 'no';
+            const finalUpdates = { bg_email_running: 'no' };
             if (session.email) {
               delete session.raw_email;
               finalUpdates.raw_email = null;
@@ -785,8 +803,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       // 2. GST
-      if (updates.raw_gstin && !session.bg_gst_running) {
-        session.bg_gst_running = true;
+      if (updates.raw_gstin && session.bg_gst_running !== 'yes') {
+        session.bg_gst_running = 'yes';
         const candidate = updates.raw_gstin;
         Promise.resolve().then(async () => {
           try {
@@ -794,10 +812,10 @@ export function createCallSession(callerPhone = '', options = {}) {
             // Removal of GST Validation as per user request (GST TRUST RULE)
             const normalized = candidate.replace(/\s+/g, '').toUpperCase();
             session.gstin = normalized;
-            session.gstin_valid = true;
+            session.gstin_valid = 'yes';
             if (isActiveCallback()) {
               if (log) log.withComponent('Validation').info('[Background] GST Captured');
-              if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: true, bg_gst_running: false } });
+              if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: 'yes', bg_gst_running: 'no' } });
             }
           } catch (e) {
             console.error(e);
@@ -806,8 +824,8 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Apologize and ask for GST again.]`, tts, silenceFiller);
             }
           } finally {
-            session.bg_gst_running = false;
-            if (session.gstin_valid) {
+            session.bg_gst_running = 'no';
+            if (session.gstin_valid === 'yes') {
               delete session.raw_gstin;
             }
             if (silenceFiller && !tts?.isSpeaking) silenceFiller.resume();
@@ -816,9 +834,9 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       // 3. Listing Date Normalization
-      if (updates.raw_listing_start && !session.bg_listing_running) {
-        session.bg_listing_running = true;
-        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: true } });
+      if (updates.raw_listing_start && session.bg_listing_running !== 'yes') {
+        session.bg_listing_running = 'yes';
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_listing_running: 'yes' } });
         const candidate = updates.raw_listing_start;
         Promise.resolve().then(async () => {
           try {
@@ -841,8 +859,8 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Listing Date validation failed due to internal error.Ask the user for the date again.]`, tts, silenceFiller);
             }
           } finally {
-            session.bg_listing_running = false;
-            const finalUpdates = { bg_listing_running: false };
+            session.bg_listing_running = 'no';
+            const finalUpdates = { bg_listing_running: 'no' };
             if (session.listing_start) {
               delete session.raw_listing_start;
               finalUpdates.raw_listing_start = null;
@@ -853,9 +871,9 @@ export function createCallSession(callerPhone = '', options = {}) {
       }
 
       // 4. Price Range Validation
-      if ((updates.raw_price_min || updates.raw_price_max) && !session.bg_price_running) {
-        session.bg_price_running = true;
-        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: true } });
+      if ((updates.raw_price_min || updates.raw_price_max) && session.bg_price_running !== 'yes') {
+        session.bg_price_running = 'yes';
+        if (log) log.withComponent('Database').info('Saving session updates', { updates: { bg_price_running: 'yes' } });
         let originalMin = updates.raw_price_min || session.price_min || "";
         let originalMax = updates.raw_price_max || session.price_max || "";
         let pMin = parseFloat(updates.raw_price_min !== undefined ? updates.raw_price_min : session.price_min || 0);
@@ -885,8 +903,8 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Price Range validation failed due to internal error.Ask the user for the price range again.]`, tts, silenceFiller);
             }
           } finally {
-            session.bg_price_running = false;
-            const finalUpdates = { bg_price_running: false };
+            session.bg_price_running = 'no';
+            const finalUpdates = { bg_price_running: 'no' };
             if (session.price_min && !isNaN(parseFloat(session.price_min))) {
               delete session.raw_price_min;
               delete session.raw_price_max;
@@ -901,6 +919,8 @@ export function createCallSession(callerPhone = '', options = {}) {
       // 5. KB
       if (updates.kb_query) {
         const query = updates.kb_query;
+        session.kb_search_active = true; // Mark search as active
+        if (log) log.withComponent('KnowledgeBase').info(`Search initiated for: "${query}"`);
         delete updates.kb_query;
         delete session.kb_query; // Clear from session to prevent loops
         if (tts) {
@@ -914,16 +934,17 @@ export function createCallSession(callerPhone = '', options = {}) {
                 const parsed = JSON.parse(kbRaw);
                 kbText = parsed.data || kbRaw;
               } catch (e) { /* use raw if not JSON */ }
+
               if (sessionLogger) sessionLogger.withComponent('KnowledgeBase').info(`[Background] KB Results found for: "${query}"`, { info_length: kbText.length });
 
-              if (isActiveCallback() && currentProcId === currentProcessingId) {
-                // Pass true for isRecursive to maintain logical turn ID and session flow
+              if (isActiveCallback()) {
+                // We proceed even if currentProcId moved, because the user might have just said "ok" 
+                // and we still want to deliver the answer.
                 await processTranscript(`[SYSTEM: Knowledge Base Results: ${kbText}]`, tts, silenceFiller, {}, true);
-              } else if (sessionLogger) {
-                sessionLogger.warn(`[Workflow] Stale KB result for: "${query}" (expected ProcId ${currentProcId}, but current is ${currentProcessingId})`);
               }
             } catch (e) {
               if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
+              session.kb_search_active = false;
             }
           });
         }
@@ -966,6 +987,9 @@ export function createCallSession(callerPhone = '', options = {}) {
       const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const formattedToday = `${today.getDate().toString().padStart(2, '0')} /${monthNames[today.getMonth()]}/${today.getFullYear()} `;
       userMessage = `${transcript} \n\n[SYSTEM: Date: ${formattedToday}, Session: ${JSON.stringify(activeData)}]`;
+      if (session.kb_search_active) {
+        userMessage += `\n[SYSTEM: A Knowledge Base search is currently in progress. DO NOT terminate. Wait for results.]`;
+      }
     }
 
     // PUSH USER MESSAGE TO HISTORY ONCE
@@ -1093,7 +1117,7 @@ export function createCallSession(callerPhone = '', options = {}) {
       conversationHistory.push(sanitizeMessage({
         role: 'assistant',
         content: [{
-          type: 'output_text',
+          type: 'text',
           text: JSON.stringify({
             say: fastMatchResult.say,
             updates_json: JSON.stringify(updates),
