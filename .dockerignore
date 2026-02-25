@@ -1,11 +1,13 @@
-node_modules/
+node_modules
+.git
 .env
-logs/
+logs
 *.log
-.DS_Store
-.claude/
 history.txt
 old_workflow*.js
 test-*.js
 verify-*.js
+meesho-terms.txt
 diff.txt
+.claude
+.DS_Store
