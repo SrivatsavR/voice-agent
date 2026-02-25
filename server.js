@@ -561,13 +561,13 @@ wss.on('connection', (ws) => {
                 if (burst?.transcript && burst.transcript.toLowerCase() !== transcript.toLowerCase()) {
                   callLog.withComponent('Validation').info(`[Burst Correction] REST Result: "${burst.transcript}" (Streaming was: "${transcript}")`);
 
-                  const sess = callSession.getSession();
                   const cleanedBurst = burst.transcript.replace(/[\s\-]/g, '').toUpperCase();
+                  const updates = {};
 
                   // If it looks like a GST (15 chars) - Simply Collect
                   if (cleanedBurst.length === 15 || cleanedBurst.match(/[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z]/)) {
-                    sess.gstin = cleanedBurst;
-                    sess.gstin_valid = 'yes'; // Mark as collected
+                    updates.gstin = cleanedBurst;
+                    updates.gstin_valid = 'yes';
                     callLog.withComponent('Validation').info(`[Burst Success] Collected GSTIN from burst: ${cleanedBurst}`);
                   }
                   // If it looks like an email
@@ -577,10 +577,14 @@ wss.on('connection', (ws) => {
                     const val = await validateEmailTool.invoke({ email: parsedNorm.normalized_email });
                     const parsedVal = typeof val === 'string' ? JSON.parse(val) : val;
                     if (parsedVal.valid || parsedVal.success) {
-                      sess.email = parsedVal.normalized || parsedVal.data?.normalized;
-                      sess.email_valid = 'yes';
-                      callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${parsedVal.normalized}`);
+                      updates.email = parsedVal.normalized || parsedVal.data?.normalized;
+                      updates.email_valid = 'yes';
+                      callLog.withComponent('Validation').info(`[Burst Success] Corrected Email from burst: ${updates.email}`);
                     }
+                  }
+
+                  if (Object.keys(updates).length > 0) {
+                    callSession.updateSession(updates);
                   }
                 }
               } catch (e) { }
@@ -777,7 +781,13 @@ wss.on('connection', (ws) => {
         asr = new ElevenLabsASR(onTranscript, asrOptions);
       }
 
-      callSession = createCallSession(callerPhone, { logger: callLog });
+      callSession = createCallSession(callerPhone, {
+        logger: callLog,
+        onSessionUpdate: (updatedSession) => {
+          // Log a special message that app.js understands for UI syncing
+          callLog.withComponent('Database').info('SESSION_UPDATED', { session: updatedSession });
+        }
+      });
       if (activeCalls.has(callId)) {
         activeCalls.get(callId).callSession = callSession;
       }

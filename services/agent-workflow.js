@@ -262,7 +262,8 @@ const closureAgent = new Agent({
   - Set "next_node": "TERM_COMPLETE".
 
 === RULES ===
-- If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. Explain it naturally in Hindi. Set 'kb_search_active': false in 'updates_json'.
+- If you see "[SYSTEM: Knowledge Base Results: ...]" in the history or current prompt, it means the information you requested has arrived. You MUST explain it naturally in Hindi. Set 'kb_search_active': false in 'updates_json'.
+- **CRITICAL**: Do NOT just say you will check; since the results are here, provide the ACTUAL answer immediately.
 - NEVER set next_node: "TERM_COMPLETE" if 'kb_search_active' is true.
 - Always ask "Kya aapko kuch aur jaanna hai?" after providing an answer.
 - **EXTRACTION**: Capture ANY session data provided in 'updates_json'.
@@ -436,6 +437,20 @@ export function createCallSession(callerPhone = '', options = {}) {
   // Store session-level logger so it's accessible from processTranscript
   // without being shadowed by the inner `options` parameter
   const sessionLogger = options.logger || null;
+  const onSessionUpdate = options.onSessionUpdate || null;
+
+  function notifyUpdate() {
+    if (onSessionUpdate) onSessionUpdate({ ...session });
+  }
+
+  function updateSession(updates) {
+    if (!updates) return;
+    Object.assign(session, updates);
+    if (sessionLogger) {
+      sessionLogger.withComponent('Database').info('External session update', { updates });
+    }
+    notifyUpdate();
+  }
 
   // ── Internal runner ─────────────────────────────────────────────────────
 
@@ -807,6 +822,7 @@ export function createCallSession(callerPhone = '', options = {}) {
                   log.withComponent('Validation').info('[Background] Email Validated', { email: session.email });
                   log.withComponent('Database').info('Saving session updates', { updates: { email: session.email, email_valid: 'yes' } });
                 }
+                notifyUpdate();
                 if (currentProcId === currentProcessingId && isActiveCallback()) {
                   // Trigger continuity so agent asks for GST next without waiting for user "confirm"
                   await processTranscript(`[SYSTEM: Email verified successfully. Proceed to next field.]`, tts, silenceFiller, {}, true);
@@ -835,6 +851,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               finalUpdates.raw_email = null;
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            notifyUpdate();
             if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
           }
         });
@@ -854,6 +871,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             if (isActiveCallback()) {
               if (log) log.withComponent('Validation').info('[Background] GST Captured');
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { gstin: normalized, gstin_valid: 'yes', bg_gst_running: 'no' } });
+              notifyUpdate();
 
               if (currentProcId === currentProcessingId) {
                 await processTranscript(`[SYSTEM: GST captured successfully. Proceed to closure.]`, tts, silenceFiller, {}, true);
@@ -866,10 +884,10 @@ export function createCallSession(callerPhone = '', options = {}) {
               await processTranscript(`[SYSTEM: Verification failed due to internal tool error.Apologize and ask for GST again.]`, tts, silenceFiller);
             }
           } finally {
-            session.bg_gst_running = 'no';
             if (session.gstin_valid === 'yes') {
               delete session.raw_gstin;
             }
+            notifyUpdate();
             if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
           }
         });
@@ -893,6 +911,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.listing_start = norm.normalized;
               if (log) log.withComponent('Validation').info('[Background] Date Normalized', { date: norm.normalized });
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { listing_start: norm.normalized } });
+              notifyUpdate();
 
               if (currentProcId === currentProcessingId && isActiveCallback()) {
                 await processTranscript(`[SYSTEM: Listing date normalized to ${norm.normalized}.]`, tts, silenceFiller, {}, true);
@@ -912,6 +931,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               finalUpdates.raw_listing_start = null;
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            notifyUpdate();
           }
         });
       }
@@ -943,6 +963,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               session.price_max = res.price_max;
               if (log) log.withComponent('Validation').info('[Background] Price Validated', { min: res.price_min, max: res.price_max });
               if (log) log.withComponent('Database').info('Saving session updates', { updates: { price_min: res.price_min, price_max: res.price_max } });
+              notifyUpdate();
 
               if (currentProcId === currentProcessingId && isActiveCallback()) {
                 await processTranscript(`[SYSTEM: Price range validated to ₹${res.price_min}-₹${res.price_max}.]`, tts, silenceFiller, {}, true);
@@ -964,6 +985,7 @@ export function createCallSession(callerPhone = '', options = {}) {
               finalUpdates.raw_price_max = null;
             }
             if (log) log.withComponent('Database').info('Saving session updates', { updates: finalUpdates });
+            notifyUpdate();
           }
         });
       }
@@ -995,6 +1017,7 @@ export function createCallSession(callerPhone = '', options = {}) {
                 // This prevents the synchronous part of processTranscript from appending 
                 // "search in progress" instructions that contradict the injected results.
                 session.kb_search_active = false;
+                notifyUpdate(); // Notify UI that search finished
 
                 // We proceed even if currentProcId moved, because the user might have just said "ok" 
                 // and we still want to deliver the answer.
@@ -1003,6 +1026,7 @@ export function createCallSession(callerPhone = '', options = {}) {
             } catch (e) {
               if (log) log.withComponent('KnowledgeBase').error('[Background] KB Query crashed', e);
               session.kb_search_active = false;
+              notifyUpdate();
             } finally {
               if (silenceFiller && !tts?.isSpeaking && !tts?.hasPendingAudio()) silenceFiller.resume();
             }
@@ -1292,6 +1316,7 @@ export function createCallSession(callerPhone = '', options = {}) {
     processTranscript,
     setIsActiveCallback,
     checkFastMatch,
+    updateSession,
     getCurrentNode: () => currentNode,
     getSession: () => ({ ...session, transcript: conversationHistory }),
     isTerminal: () => TERMINAL_NODES.has(currentNode),

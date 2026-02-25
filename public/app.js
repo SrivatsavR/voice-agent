@@ -65,7 +65,15 @@ function handleLogEntry(entry) {
     const component = entry.component;
     const lowMsgEarly = msg.toLowerCase();
 
-    // 1. Chat messages
+    // 4. Session updates (Phase 4 Real-time Sync)
+    if (entry.message === 'SESSION_UPDATED' && entry.data?.session) {
+        currentSession = entry.data.session;
+        updateVariables(currentSession);
+        // Persist local state
+        localStorage.setItem('lastSession', JSON.stringify(currentSession));
+        return;
+    }
+
     const role = component === 'Agent' ? 'agent' : (component === 'User' ? 'user' : null);
     if (role) {
         // Check if this is an intelligence event (barge-in, silence filler, etc.)
@@ -378,7 +386,7 @@ function updateVariables(session) {
                 return min || null;
             }
         },
-        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start' },
+        { key: 'listing_start', label: 'Ready to List?', icon: 'calendar', fallback: 'raw_listing_start', format: (s) => s.listing_start || s.raw_listing_start },
         { key: 'email', label: 'Email Address', icon: 'mail', fallback: 'raw_email' },
         { key: 'gstin', label: 'GST/UIN', icon: 'shield-check', fallback: 'raw_gstin' }
     ];
